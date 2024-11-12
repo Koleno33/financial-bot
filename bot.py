@@ -1,7 +1,7 @@
 import telethon
 import datetime
 from sqlalchemy import select
-from database import Session, engine, User
+from database import Session, engine, User, Section, SectionName, Record, CurrencyName, Currency
 from config import read_config, config
 from log import logger
 from command import Command, Arg, reserved, get_date, get_time
@@ -16,7 +16,7 @@ def check_pattern(args: list[Arg] | Arg, pattern: str):
     if len(args) != len(pattern):
         return False
     for i in range(len(args)):
-        if pattern[i] != args[i].type:
+        if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time'):
             return False
     return True
 
@@ -86,27 +86,54 @@ async def filter_another_commands(event):
 async def handle_another_command(event):
     command = Command(event.raw_text)
     msg = ''
+    date, time, amount, currency, section = None, None, None, None, None
 
-    if check_pattern(command.args[0], 'date'):
+    if check_pattern(command.args, 'date time number text text'):
         date = get_date(command.args[0].value)
-        if check_pattern(command.args[1:], 'time number text text'):
-            msg = f'Добавил **{command.args[2].value} {command.args[3].value}** на дату **{command.args[0].value}** ' \
-                  f'и время **{command.args[1].value}** в раздел **{command.args[4].value}**.'
-            if date is None:
-                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
-                      'символа "`/`" может быть "`-`" либо "`.`".'
-            time = get_time(command.args[1].value)
-            if time is None: # datetime.datetime.combine(datetime.datetime.now().date(), datetime.datetime.now().time())
-                if msg: msg += '\n'
-                msg += 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
-                      'символа "`.`" может быть "`:`".'
-        elif check_pattern(command.args[1:], 'number text text'):
-            now = datetime.datetime.now()
-            msg = f'Добавил **{command.args[1].value} {command.args[2].value}** на дату **{command.args[0].value}** ' \
-                  f'и на текущее время **({now.strftime("%H:%M")})** в раздел **{command.args[3].value}**.'
-            if date is None:
-                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
-                      'символа "`/`" может быть "`-`" либо "`.`".'
+        msg = f'Добавил **{command.args[2].value} {command.args[3].value}** на дату **{command.args[0].value}** ' \
+              f'и время **{command.args[1].value}** в раздел **{command.args[4].value}**.'
+        if date is None:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+        time = get_time(command.args[1].value)
+        if time is None: # datetime.datetime.combine(datetime.datetime.now().date(), datetime.datetime.now().time())
+            if msg: msg += '\n'
+            msg += 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
+                  'символа "`.`" может быть "`:`".'
+        try:
+            amount = float(command.args[2].value.replace(',', '.'))
+        except Exception as e:
+            logger.debug(e)
+        currency = command.args[3].value
+        section = command.args[4].value
+    elif check_pattern(command.args, 'number text text'):
+        now = datetime.datetime.now()
+        msg = f'Добавил **{command.args[0].value} {command.args[1].value}** на сегодня ' \
+              f'**({now.strftime("%d.%m.%y")})** и на текущее время **({now.strftime("%H:%M")})** в раздел ' \
+              f'**{command.args[2].value}**.'
+        date = datetime.datetime.now().date()
+        time = datetime.datetime.now().time()
+        try:
+            amount = float(command.args[0].value.replace(',', '.'))
+        except Exception as e:
+            logger.debug(e)
+        currency = command.args[1].value
+        section = command.args[2].value
+    elif check_pattern(command.args, 'date number text text'):
+        date = get_date(command.args[0].value)
+        now = datetime.datetime.now()
+        msg = f'Добавил **{command.args[1].value} {command.args[2].value}** на дату **{command.args[0].value}** ' \
+              f'и на текущее время **({now.strftime("%H:%M")})** в раздел **{command.args[3].value}**.'
+        if date is None:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+        time = datetime.datetime.now().time()
+        try:
+            amount = float(command.args[1].value.replace(',', '.'))
+        except Exception as e:
+            logger.debug(e)
+        currency = command.args[2].value
+        section = command.args[3].value
     elif check_pattern(command.args, 'time number text text'):
         now = datetime.datetime.now()
         msg = f'Добавил **{command.args[1].value} {command.args[2].value}** на сегодня ' \
@@ -116,17 +143,50 @@ async def handle_another_command(event):
         if time is None:
             msg = 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
                   'символа "`.`" может быть "`:`".'
-    elif check_pattern(command.args, 'number text text'):
-        now = datetime.datetime.now()
-        msg = f'Добавил **{command.args[0].value} {command.args[1].value}** на сегодня ' \
-              f'**({now.strftime("%d.%m.%y")})** и на текущее время **({now.strftime("%H:%M")})** в раздел ' \
-              f'**{command.args[2].value}**.'
+        date = datetime.datetime.now().date()
+        try:
+            amount = float(command.args[1].value.replace(',', '.'))
+        except Exception as e:
+            logger.debug(e)
+        currency = command.args[2].value
+        section = command.args[3].value
     else:
         msg = 'Неизвестная команда! Отправьте /start, чтобы посмотреть список актуальных команд.'
 
-    if not msg:
-        msg = f"Неверный набор аргументов для команды добавления! Отправьте /start, чтобы посмотреть список " \
-              f"доступных аргументов."
+    forbidden_names = False
+    if any(name in reserved for name in (currency, section)):
+        forbidden_names = True
+        msg = 'Нельзя использовать ключевое слово в качестве названия для валюты или раздела.'
+
+    if None in (date, time, amount, currency, section):
+        if None in (amount, currency, section):
+            msg = f"Неверный набор аргументов для команды добавления! Отправьте /start, чтобы посмотреть список " \
+                  f"доступных аргументов."
+    elif not forbidden_names:
+        with Session(engine) as session:
+            res_datetime = datetime.datetime.combine(date, time)
+            checked_section = session.query(Section).filter(Section.user_id == event.chat_id,
+                                                            Section.names.contains(section)).one_or_none()
+            checked_currency = session.query(Currency).filter(Currency.user_id == event.chat_id,
+                                                              Currency.names.contains(currency)).one_or_none()
+            if checked_section is None:
+                checked_section = Section(user_id=event.chat_id)
+                session.add(checked_section)
+                session.flush()
+                new_section_name = SectionName(section_id=checked_section.id, name=section,
+                                               added_datetime=datetime.datetime.now())
+                session.add(new_section_name)
+            if checked_currency is None:
+                checked_currency = Currency(user_id=event.chat_id)
+                session.add(checked_currency)
+                session.flush()
+                new_currency_name = CurrencyName(currency_id=checked_currency.id, name=currency,
+                                                 added_datetime=datetime.datetime.now())
+                session.add(new_currency_name)
+            session.add(Record(section_id=checked_section.id, datetime=res_datetime, amount=amount,
+                               currency_id=checked_currency.id, added_datetime=datetime.datetime.now()))
+            session.commit()
+
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 def main():

@@ -1,12 +1,13 @@
 import re
 import datetime
+from log import logger
 
 reserved = ["/start", "доход", "удали", "раздел ", "разделы", "валюта ", "валюты"]
 
 regexp = {
-    "number": re.compile(r'^\b[0-9]+\b$'),
-    "date":   re.compile(r'^\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\bпозавчера|\bвчера|\bсегодня|\bзавтра|\bпослезавтра)\b$'),
     "time":   re.compile(r'^\b\d{1,2}[.:]\d{2}\b$'),
+    "number": re.compile(r'^[+]?\d+(?:[.,]\d+)?$'), # float r'^\b[0-9]+\b$'
+    "date":   re.compile(r'^\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\bпозавчера|\bвчера|\bсегодня|\bзавтра|\bпослезавтра)\b$'),
     "text":   re.compile(r'[\w]'),
 }
 
@@ -24,17 +25,18 @@ def get_date(text: str):
             return datetime.datetime.now().date() + datetime.timedelta(days=2)
 
     try:
-        if command.args[0].value[:2].isdigit():
-            limiter = command.args[0].value[2]
+        if text[:2].isdigit():
+            limiter = text[2]
         else:
-            limiter = command.args[0].value[1]
-        if len(command.args[0].value[command.args[0].value.rfind(limiter) + 1:]) == 4:
+            limiter = text[1]
+        if len(text[text.rfind(limiter) + 1:]) == 4:
             year = "Y"
         else:
             year = "y"
         date = datetime.datetime.strptime(text, f'%d{limiter}%m{limiter}%{year}')
         return date.date()
-    except Exception:
+    except Exception as e:
+        logger.debug("error parsing date: ", e, text)
         return None
 
 def get_time(text: str):
@@ -42,7 +44,8 @@ def get_time(text: str):
         limiter = text[-3]
         time = datetime.datetime.strptime(text, f'%H{limiter}%M')
         return time.time()
-    except Exception:
+    except Exception as e:
+        logger.debug("error parsing time: ", e, text)
         return None
 
 def get_matched_type(arg):
@@ -67,3 +70,4 @@ class Command:
         self.args = list()
         for arg in full_command:
             self.args.append(Arg(arg, get_matched_type(arg)))
+
