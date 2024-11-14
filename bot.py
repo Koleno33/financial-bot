@@ -1,13 +1,12 @@
 import telethon
 import datetime
-from sqlalchemy import select
+from sqlalchemy import select, func, Date, DateTime, extract
 from database import Session, engine, User, Section, SectionName, Record, CurrencyName, Currency
 from config import read_config, config
 from log import logger
 from command import Command, Arg, reserved, get_date, get_time
 
 bot = telethon.TelegramClient("bot", config["api_id"], config["api_hash"]).start(bot_token=config["bot_token"])
-
 
 def check_pattern(args: list[Arg] | Arg, pattern: str):
     pattern = pattern.split()
@@ -19,6 +18,13 @@ def check_pattern(args: list[Arg] | Arg, pattern: str):
         if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time'):
             return False
     return True
+
+def record_stringify(record: Record):
+    return f"**Дата:** {record.datetime.strftime('%d.%m.%y')};\n" \
+           f"**Время:** {record.datetime.strftime('%H:%M')};\n" \
+           f"**Сумма:** {record.amount};\n" \
+           f"**Валюта:** {', '.join(record.currency.names)};\n" \
+           f"**Раздел:** {', '.join(record.section.names)}."
 
 @bot.on(telethon.events.NewMessage(pattern='/start'))
 async def handle_start_command(event):
@@ -58,7 +64,120 @@ async def handle_income_command(event):
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)удали+'))
 async def handle_delete_command(event):
-    await bot.send_message(event.chat_id, 'Удаление')
+    command = Command(event.raw_text)
+    msg = ''
+
+    if not command.args:
+        with Session(engine) as session:
+            last_record = session.query(Record, func.max(Record.added_datetime)).one_or_none()
+            if last_record:
+                msg = f"Последняя добавленная запись была успешно удалена: \n\n{record_stringify(last_record[0])}"
+                session.delete(last_record[0])
+                session.commit()
+            else:
+                msg = f"Не было найдено ни одной записи."
+    elif check_pattern(command.args, 'date time number text text'):
+        with Session(engine) as session:
+            date = get_date(command.args[0].value)
+            time = get_time(command.args[1].value)
+            if date is not None and time is not None:
+                datetime_o = datetime.datetime.combine(date, time)
+                found_record = session.query(Record).join(Currency).join(Section).\
+                    where(extract('year', Record.datetime) == datetime_o.year,
+                        extract('month', Record.datetime) == datetime_o.month,
+                        extract('day', Record.datetime) == datetime_o.day,
+                        extract('hour', Record.datetime) == datetime_o.hour,
+                        extract('minute', Record.datetime) == datetime_o.minute,
+                        Record.amount == float(command.args[2].value),
+                        Currency.names.contains(command.args[3].value),
+                        Section.names.contains(command.args[4].value))\
+                    .one_or_none()
+                if found_record is not None:
+                    msg = f"Была удалена следующая запись: \n\n{record_stringify(found_record)}"
+                    session.delete(found_record)
+                    session.commit()
+                else:
+                    msg = f"Не было найдено ни одной записи с такими параметрами."
+            elif date is None:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
+            elif time is None:
+                msg += 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
+                       'символа "`.`" может быть "`:`".'
+    elif check_pattern(command.args, 'date date text'):
+        date1 = get_date(command.args[0].value)
+        date2 = get_date(command.args[1].value)
+        if date1 is not None and date2 is not None:
+            date1 = datetime.datetime.combine(date1, datetime.datetime.min.time())
+            date2 = datetime.datetime.combine(date2, datetime.datetime.min.time())
+            with Session(engine) as session:
+                to_delete = session.query(Record.id).join(Section).filter(Section.names.contains(
+                    command.args[2].value), Record.datetime.between(date1, date2))
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete.subquery())).delete()
+                if found_cnt:
+                    session.commit()
+                    msg = f"Успешно удалено {found_cnt} записей с {command.args[0].value} по " \
+                          f"{command.args[1].value} в разделе {command.args[2].value}."
+                else:
+                    msg = f"Не было найдено ни одной записи в указанном диапазоне дат и разделе."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    elif check_pattern(command.args, 'date date'):
+        date1 = get_date(command.args[0].value)
+        date2 = get_date(command.args[1].value)
+        if date1 is not None and date2 is not None:
+            date1 = datetime.datetime.combine(date1, datetime.datetime.min.time())
+            date2 = datetime.datetime.combine(date2, datetime.datetime.min.time())
+            with Session(engine) as session:
+                found_cnt = session.query(Record).filter(Record.datetime.between(date1, date2)).delete()
+                if found_cnt:
+                    session.commit()
+                    msg = f"Успешно удалено {found_cnt} записей с {command.args[0].value} по " \
+                          f"{command.args[1].value}."
+                else:
+                    msg = f"Не было найдено ни одной записи в указанном диапазоне дат."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    elif check_pattern(command.args, 'date text'):
+        date = get_date(command.args[0].value)
+        if date is not None:
+            with Session(engine) as session:
+                to_delete = session.query(Record.id).join(Section).filter(extract('year', Record.datetime) == date.year,
+                      extract('month', Record.datetime) == date.month,
+                      extract('day', Record.datetime) == date.day,
+                      Section.names.contains(command.args[1].value))
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete.subquery())).delete()
+                if found_cnt:
+                    session.commit()
+                    msg = f"Успешно удалено {found_cnt} записей из раздела {command.args[1].value} " \
+                          f"за {command.args[0].value}."
+                else:
+                    msg = f"Не было найдено ни одной записи за указанную дату в указанном разделе."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    elif check_pattern(command.args, 'date'):
+        date = get_date(command.args[0].value)
+        if date is not None:
+            with Session(engine) as session:
+                found_cnt = session.query(Record).filter(extract('year', Record.datetime) == date.year,
+                      extract('month', Record.datetime) == date.month,
+                      extract('day', Record.datetime) == date.day).delete()
+                if found_cnt:
+                    session.commit()
+                    msg = f"Успешно удалено {found_cnt} записей за {command.args[0].value}."
+                else:
+                    msg = f"Не было найдено ни одной записи за указанную дату."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    else:
+        msg = f"Неверный набор аргументов для команды удаления! Отправьте /start, чтобы посмотреть список " \
+              f"доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)раздел +'))
 async def handle_section_command(event):
