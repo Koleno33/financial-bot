@@ -181,7 +181,26 @@ async def handle_delete_command(event):
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)раздел +'))
 async def handle_section_command(event):
-    await bot.send_message(event.chat_id, 'Раздел')
+    command = Command(event.raw_text)
+    msg = ''
+    if check_pattern(command.args, 'text text'):
+        section_name = command.args[0].value
+        new_name = command.args[1].value
+        with Session(engine) as session:
+            checked_section = session.query(Section).filter(Section.user_id == event.chat_id,
+                                            Section.names.contains(section_name)).one_or_none()
+
+            if checked_section is not None:
+                    new_sectionname_o = SectionName(section_id=checked_section.id, name=new_name, 
+                                                    added_datetime=datetime.datetime.now())
+                    session.add(new_sectionname_o)
+                    session.commit()
+                    msg = f"Успешно добавлен новый синоним {new_name} для раздела {section_name}."
+            else:
+                msg = f"Не найдено раздела с названием {section_name}."
+    else:
+        msg = f"Неверный набор аргументов для команды добавления названия раздела! Отправьте /start, чтобы посмотреть список доступных аргументов."
+    await bot.send_message(event.chat_id, msg)
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)^разделы$'))
 async def handle_sections_command(event):

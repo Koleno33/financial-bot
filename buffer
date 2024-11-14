@@ -1,0 +1,5 @@
+git branch -m main
+git add .
+git commit -m "add rename section"
+git remote add origin https://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@github.com/Koleno33/financial_bot.git
+git push -u origin main

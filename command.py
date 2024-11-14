@@ -62,7 +62,7 @@ class Arg:
 class Command:
     def __init__(self, full_command: str):
         full_command = full_command.lower().split()
-        if full_command[0] in reserved:
+        if full_command[0] in [r.strip() for r in reserved]:
             self.instruction = full_command[0]
             full_command.remove(full_command[0])
         else:
