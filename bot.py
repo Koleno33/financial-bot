@@ -1,10 +1,13 @@
 import telethon
 import datetime
+from asyncio import TimeoutError
 from sqlalchemy import select, func, Date, DateTime, extract
 from database import Session, engine, User, Section, SectionName, Record, CurrencyName, Currency
 from config import read_config, config
 from log import logger
 from command import Command, Arg, reserved, get_date, get_time
+
+answering_state = False
 
 bot = telethon.TelegramClient("bot", config["api_id"], config["api_hash"]).start(bot_token=config["bot_token"])
 
@@ -117,7 +120,7 @@ async def handle_delete_command(event):
                 if found_cnt:
                     session.commit()
                     msg = f"Успешно удалено {found_cnt} записей с {command.args[0].value} по " \
-                          f"{command.args[1].value} в разделе {command.args[2].value}."
+                          f"{command.args[1].value} в разделе {command.args[2].original_value}."
                 else:
                     msg = f"Не было найдено ни одной записи в указанном диапазоне дат и разделе."
         else:
@@ -151,7 +154,7 @@ async def handle_delete_command(event):
                 found_cnt = session.query(Record).filter(Record.id.in_(to_delete.subquery())).delete()
                 if found_cnt:
                     session.commit()
-                    msg = f"Успешно удалено {found_cnt} записей из раздела {command.args[1].value} " \
+                    msg = f"Успешно удалено {found_cnt} записей из раздела {command.args[1].original_value} " \
                           f"за {command.args[0].value}."
                 else:
                     msg = f"Не было найдено ни одной записи за указанную дату в указанном разделе."
@@ -183,40 +186,168 @@ async def handle_delete_command(event):
 async def handle_section_command(event):
     command = Command(event.raw_text)
     msg = ''
+
     if check_pattern(command.args, 'text text'):
+        global answering_state
         section_name = command.args[0].value
         new_name = command.args[1].value
         with Session(engine) as session:
             checked_section = session.query(Section).filter(Section.user_id == event.chat_id,
                                             Section.names.contains(section_name)).one_or_none()
-
+            checked_synonym = session.query(Section).filter(Section.user_id == event.chat_id,
+                                            Section.names.contains(new_name)).one_or_none()
             if checked_section is not None:
-                    new_sectionname_o = SectionName(section_id=checked_section.id, name=new_name, 
+                if checked_synonym is not None:
+                    if len(checked_synonym.sn) > 1:
+                        sn = session.query(SectionName).filter(SectionName.name == new_name).one_or_none()
+                        sn.section_id = checked_section.id
+                        new_synonyms = list(set(checked_synonym.names) - set([new_name]))
+                        msg = f"Слово **{new_name}** теперь является синонимом для раздела **{section_name}**. " \
+                              f"У раздела **{new_synonyms[0]}** остались следующие синонимы:\n" \
+                              f"{', '.join(new_synonyms)}"
+                    else:
+                        try:
+                            async with bot.conversation(event.chat_id) as conv:
+                                answering_state = True
+                                await conv.send_message(f'У раздела **{new_name}** есть только одно название. '
+                                        f'Присвоение этого названия разделу **{section_name}** повлечет перенесение '
+                                        f'всех записей из раздела **{new_name}** в раздел **{section_name}**. '
+                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
+                                text = await conv.get_response()
+                                text = text.raw_text
+                                if text is not None and text.lower() in ('да', 'д'):
+                                    for sn in checked_synonym.sn: # len(sn) == 1
+                                        sn.section_id = checked_section.id
+                                    for record in checked_synonym.records:
+                                        record.section_id = checked_section.id
+                                    msg = f"Раздел **{new_name}** успешно добавлен в список синонимов раздела " \
+                                          f"**{section_name}**, а записи в этих разделах объединены."
+                                else:
+                                    msg = "Раздел не был переименован."
+                                answering_state = False
+                        except TimeoutError:
+                            msg = "Время ожидания ответа истекло."
+                else:
+                    new_sectionname_o = SectionName(section_id=checked_section.id, name=new_name,
                                                     added_datetime=datetime.datetime.now())
                     session.add(new_sectionname_o)
-                    session.commit()
-                    msg = f"Успешно добавлен новый синоним {new_name} для раздела {section_name}."
+                    msg = f"Новый синоним **{new_name}** для раздела **{section_name}** успешно добавлен."
             else:
-                msg = f"Не найдено раздела с названием {section_name}."
+                msg = f"Не найдено раздела с названием **{section_name}**."
+            session.commit()
     else:
-        msg = f"Неверный набор аргументов для команды добавления названия раздела! Отправьте /start, чтобы посмотреть список доступных аргументов."
-    await bot.send_message(event.chat_id, msg)
+        msg = f"Неверный набор аргументов для команды добавления названия раздела! Отправьте /start, чтобы " \
+              f"посмотреть список доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)^разделы$'))
 async def handle_sections_command(event):
-    await bot.send_message(event.chat_id, 'Разделы')
+    command = Command(event.raw_text)
+
+    with Session(engine) as session:
+        sections = session.query(Section).where(Section.user_id == event.chat_id).all()
+        if sections:
+            msg = f"Список разделов:\n\n"
+            for i, s in enumerate(sections):
+                snames = session.query(SectionName.name).order_by(SectionName.added_datetime).where(
+                    SectionName.section_id == s.id).all()
+                if not len(snames):
+                    continue
+                names = [name[0] for name in snames]
+                msg += f"{i + 1}. **{names[0]}** " \
+                       f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
+        else:
+            msg = f"Не найдено ни одного раздела."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)валюта +'))
 async def handle_currency_command(event):
-    await bot.send_message(event.chat_id, 'Валюта')
+    command = Command(event.raw_text)
+    msg = ''
+
+    if check_pattern(command.args, 'text text'):
+        global answering_state
+        currency_name = command.args[0].value
+        new_name = command.args[1].value
+        with Session(engine) as session:
+            checked_currency = session.query(Currency).filter(Currency.user_id == event.chat_id,
+                                                              Currency.names.contains(currency_name)).one_or_none()
+            checked_synonym = session.query(Currency).filter(Currency.user_id == event.chat_id,
+                                            Currency.names.contains(new_name)).one_or_none()
+            if checked_currency is not None:
+                if checked_synonym is not None:
+                    print(checked_synonym)
+                    if len(checked_synonym.cn) > 1:
+                        cn = session.query(CurrencyName).filter(CurrencyName.name == new_name).one_or_none()
+                        cn.currency_id = checked_currency.id
+                        new_synonyms = list(set(checked_synonym.names) - set([new_name]))
+                        msg = f"Слово **{new_name}** теперь является синонимом для валюты **{currency_name}**. " \
+                              f"У валюты **{new_synonyms[0]}** остались следующие синонимы:\n" \
+                              f"{', '.join(new_synonyms)}"
+                    else:
+                        try:
+                            async with bot.conversation(event.chat_id) as conv:
+                                answering_state = True
+                                await conv.send_message(f'У валюты **{new_name}** есть только одно название. '
+                                        f'Присвоение этого названия валюте **{currency_name}** повлечет перенесение '
+                                        f'всех записей с валютой **{new_name}** к валюте **{currency_name}**. '
+                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
+                                text = await conv.get_response()
+                                text = text.raw_text
+                                if text is not None and text.lower() in ('да', 'д'):
+                                    for cn in checked_synonym.cn:
+                                        cn.currency_id = checked_currency.id
+                                    for record in checked_synonym.records:
+                                        record.currency_id = checked_currency.id
+                                    msg = f"Валюта **{new_name}** успешно добавлена в список синонимов валюты " \
+                                          f"**{currency_name}**, а записи с этими валютами объединены."
+                                else:
+                                    msg = "Валюта не была переименована."
+                                answering_state = False
+                        except TimeoutError:
+                            msg = "Время ожидания ответа истекло."
+                else:
+                    new_currencyname_o = CurrencyName(currency_id=checked_currency.id, name=new_name,
+                                                      added_datetime=datetime.datetime.now())
+                    session.add(new_currencyname_o)
+                    msg = f"Новый синоним **{new_name}** для валюты **{currency_name}** успешно добавлен."
+            else:
+                msg = f"Не найдено валюты с названием **{currency_name}**."
+            session.commit()
+    else:
+        msg = f"Неверный набор аргументов для команды добавления названия валюты! Отправьте /start, чтобы " \
+              f"посмотреть список доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)^валюты$'))
 async def handle_currencies_command(event):
-    await bot.send_message(event.chat_id, 'Валюты')
+    command = Command(event.raw_text)
+
+    with Session(engine) as session:
+        currencies = session.query(Currency).where(Currency.user_id == event.chat_id).all()
+        if currencies:
+            msg = f"Список валют:\n\n"
+            for i, c in enumerate(currencies):
+                snames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                    CurrencyName.currency_id == c.id).all()
+                if not len(snames):
+                    continue
+                names = [name[0] for name in snames]
+                msg += f"{i + 1}. **{names[0]}** " \
+                       f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
+        else:
+            msg = f"Не найдено ни одной валюты."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 async def filter_another_commands(event):
+    if answering_state:
+        return False
     for word in reserved:
-        if word in event.raw_text:
+        if word in event.raw_text.lower():
             return False
     return True
 
@@ -228,8 +359,9 @@ async def handle_another_command(event):
 
     if check_pattern(command.args, 'date time number text text'):
         date = get_date(command.args[0].value)
-        msg = f'Добавил **{command.args[2].value} {command.args[3].value}** на дату **{command.args[0].value}** ' \
-              f'и время **{command.args[1].value}** в раздел **{command.args[4].value}**.'
+        msg = f'Добавил **{command.args[2].value} {command.args[3].original_value}** на дату ' \
+              f'**{command.args[0].value}** ' \
+              f'и время **{command.args[1].value}** в раздел **{command.args[4].original_value}**.'
         if date is None:
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
@@ -246,9 +378,9 @@ async def handle_another_command(event):
         section = command.args[4].value
     elif check_pattern(command.args, 'number text text'):
         now = datetime.datetime.now()
-        msg = f'Добавил **{command.args[0].value} {command.args[1].value}** на сегодня ' \
+        msg = f'Добавил **{command.args[0].value} {command.args[1].original_value}** на сегодня ' \
               f'**({now.strftime("%d.%m.%y")})** и на текущее время **({now.strftime("%H:%M")})** в раздел ' \
-              f'**{command.args[2].value}**.'
+              f'**{command.args[2].original_value}**.'
         date = datetime.datetime.now().date()
         time = datetime.datetime.now().time()
         try:
@@ -260,8 +392,9 @@ async def handle_another_command(event):
     elif check_pattern(command.args, 'date number text text'):
         date = get_date(command.args[0].value)
         now = datetime.datetime.now()
-        msg = f'Добавил **{command.args[1].value} {command.args[2].value}** на дату **{command.args[0].value}** ' \
-              f'и на текущее время **({now.strftime("%H:%M")})** в раздел **{command.args[3].value}**.'
+        msg = f'Добавил **{command.args[1].value} {command.args[2].original_value}** на дату ' \
+              f'**{command.args[0].value}** ' \
+              f'и на текущее время **({now.strftime("%H:%M")})** в раздел **{command.args[3].original_value}**.'
         if date is None:
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
@@ -274,9 +407,9 @@ async def handle_another_command(event):
         section = command.args[3].value
     elif check_pattern(command.args, 'time number text text'):
         now = datetime.datetime.now()
-        msg = f'Добавил **{command.args[1].value} {command.args[2].value}** на сегодня ' \
+        msg = f'Добавил **{command.args[1].value} {command.args[2].original_value}** на сегодня ' \
               f'**({now.strftime("%d.%m.%y")})** и на время **{command.args[0].value}** в раздел ' \
-              f'**{command.args[3].value}**.'
+              f'**{command.args[3].original_value}**.'
         time = get_time(command.args[0].value)
         if time is None:
             msg = 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \

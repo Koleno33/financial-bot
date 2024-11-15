@@ -89,13 +89,8 @@ class CurrencyName(Base):
 engine = create_engine(url="sqlite:///data.db", echo=True)
 Base.metadata.create_all(engine)
 #with Session(engine) as session:
-#    datetime_o = datetime(year=2024, month=11, day=12, hour=21, minute=11)
-#    found_record = session.query(Record).join(Currency).join(Section). \
-#        where(cast(Record.datetime, Date) == cast(datetime_o, Date),
-#              extract('hour', Record.datetime) == datetime_o.hour,
-#              extract('minute', Record.datetime) == datetime_o.minute,
-#              Record.amount == float(13.3),
-#              Currency.names.contains('долларов'),
-#              Section.names.contains('вторая')) \
-#        .all()
-#    print(found_record)
+#    ss = session.query(Section).all()
+#    for s in ss:
+#        for name in s.sn:
+#            print(name)
+#    #print(msg)

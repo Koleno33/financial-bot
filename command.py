@@ -55,19 +55,22 @@ def get_matched_type(arg):
     return "unknown"
 
 class Arg:
-    def __init__(self, value: str, type: str):
+    def __init__(self, value: str, type: str, orig: str):
         self.value = value
         self.type = type
+        self.original_value = orig
 
 class Command:
     def __init__(self, full_command: str):
-        full_command = full_command.lower().split()
-        if full_command[0] in [r.strip() for r in reserved]:
-            self.instruction = full_command[0]
+        command = full_command.lower().split()
+        full_command = full_command.split()
+        if command[0] in [r.strip() for r in reserved]:
+            self.instruction = command[0]
             full_command.remove(full_command[0])
+            command.remove(command[0])
         else:
             self.instruction = None
         self.args = list()
-        for arg in full_command:
-            self.args.append(Arg(arg, get_matched_type(arg)))
+        for index, arg in enumerate(command):
+            self.args.append(Arg(arg, get_matched_type(arg), full_command[index]))
 
