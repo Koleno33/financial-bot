@@ -49,13 +49,15 @@ async def handle_start_command(event):
                                           "`Доход <месяц> (<раздел>)` - узнать доход за конкретный месяц\n"
                                           "`Доход <месяц> <год> (<раздел>)` - узнать доход за конкретный месяц конкретного года\n"
                                           "`Удали` - удалить последнюю запись\n"
-                                          "`Удали <дата> <время> <сумма> <валюта> <раздел>` - удалить конкретную запись\n"
+                                          "`Удали <дата> (<время>) <сумма> <валюта> <раздел>` - удалить конкретную запись\n"
                                           "`Удали <дата> (<раздел>)` - удалить записи за день\n"
-                                          "`Удали <дата> <дата> (<раздел>)` - удалить записи за диапазон дней включительно\n"
-                                          "`Разделы` - показать текущие разделы\n"
+                           "`Удали <дата> <дата> (<раздел>)` - удалить записи за диапазон дней включительно\n"
+                           "`Разделы` - показать текущие разделы\n"
                                           "`Раздел <название раздела> <синоним>` - создание синонимов для разделов\n"
                                           "`Валюты` - показать текущие валюты\n"
                                           "`Валюта <название валюты> <синоним>` - создание синонимов для валют\n"
+                                          "`Записи <дата>` - просмотр всех записей за конкретную дату\n"
+                                          "`Записи <дата> <дата>` - просмотр всех записей за диапазон дней\n"
                                           "\n"
                                           "То, что находится в скобках () может упускаться. Например: `доход`"
                                           "- доход за все разделы, а `доход первая` - доход в конкретном разделе за этот месяц.\n\n"
@@ -279,6 +281,28 @@ async def handle_delete_command(event):
                 session.commit()
             else:
                 msg = f"Не было найдено ни одной записи."
+    elif check_pattern(command.args, 'date number text text'):
+        with Session(engine) as session:
+            date = get_date(command.args[0].value)
+            if date is not None:
+                found_record = session.query(Record).join(Currency).join(Section).\
+                    where(extract('year', Record.datetime) == date.year,
+                        extract('month', Record.datetime) == date.month,
+                        extract('day', Record.datetime) == date.day,
+                        Record.amount == float(command.args[1].value),
+                        Currency.names.like(command.args[2].value),
+                        Section.names.like(command.args[3].value),
+                        Section.user_id == event.chat_id)\
+                    .first()
+                if found_record is not None:
+                    msg = f"Была удалена следующая запись: \n\n{record_stringify(found_record)}"
+                    session.delete(found_record)
+                    session.commit()
+                else:
+                    msg = f"Не было найдено ни одной записи с такими параметрами."
+            elif date is None:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
     elif check_pattern(command.args, 'date time number text text'):
         with Session(engine) as session:
             date = get_date(command.args[0].value)
@@ -397,7 +421,7 @@ async def handle_section_command(event):
     command = Command(event.raw_text)
     msg = ''
 
-    if command.args[0].original_value in list(months.keys()) + reserved:
+    if len(command.args) == 2 and command.args[1].original_value in list(months.keys()) + reserved:
         msg = 'Нельзя использовать ключевое слово в качестве названия для раздела.'
         await bot.send_message(event.chat_id, msg, parse_mode='md')
         return
@@ -492,7 +516,7 @@ async def handle_currency_command(event):
     command = Command(event.raw_text)
     msg = ''
 
-    if command.args[0].original_value in list(months.keys()) + reserved:
+    if len(command.args) == 2 and command.args[1].original_value in list(months.keys()) + reserved:
         msg = 'Нельзя использовать ключевое слово в качестве названия для валюты.'
         await bot.send_message(event.chat_id, msg, parse_mode='md')
         return
