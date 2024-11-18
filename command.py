@@ -2,7 +2,7 @@ import re
 import datetime
 from log import logger
 
-reserved = ["/start", "доход", "удали", "раздел", "разделы", "валюта", "валюты"]
+reserved = ["/start", "доход", "удали", "раздел", "разделы", "валюта", "валюты", "записи"]
 
 months = {'январь': 1,
           'февраль': 2,

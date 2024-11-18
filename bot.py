@@ -51,13 +51,13 @@ async def handle_start_command(event):
                                           "`Удали` - удалить последнюю запись\n"
                                           "`Удали <дата> (<время>) <сумма> <валюта> <раздел>` - удалить конкретную запись\n"
                                           "`Удали <дата> (<раздел>)` - удалить записи за день\n"
-                           "`Удали <дата> <дата> (<раздел>)` - удалить записи за диапазон дней включительно\n"
-                           "`Разделы` - показать текущие разделы\n"
+                                          "`Удали <дата> <дата> (<раздел>)` - удалить записи за диапазон дней (вторая дата - исключительно)\n"
+                                          "`Записи <дата>` - просмотр всех записей за конкретную дату\n"
+                                          "`Записи <дата> <дата>` - просмотр всех записей за диапазон дней (вторая дата - исключительно)\n"
+                                          "`Разделы` - показать текущие разделы\n"
                                           "`Раздел <название раздела> <синоним>` - создание синонимов для разделов\n"
                                           "`Валюты` - показать текущие валюты\n"
                                           "`Валюта <название валюты> <синоним>` - создание синонимов для валют\n"
-                                          "`Записи <дата>` - просмотр всех записей за конкретную дату\n"
-                                          "`Записи <дата> <дата>` - просмотр всех записей за диапазон дней\n"
                                           "\n"
                                           "То, что находится в скобках () может упускаться. Например: `доход`"
                                           "- доход за все разделы, а `доход первая` - доход в конкретном разделе за этот месяц.\n\n"
@@ -602,6 +602,64 @@ async def handle_currencies_command(event):
                 msg = f"Не найдено ни одной валюты."
     else:
         msg = f"Неверный набор аргументов для команды просмотра валют! Отправьте /start, чтобы " \
+              f"посмотреть список доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
+
+@bot.on(telethon.events.NewMessage(pattern='(?i)записи+'))
+async def handle_records_command(event):
+    command = Command(event.raw_text)
+    msg = ''
+
+    if check_pattern(command.args, 'date'):
+        date = get_date(command.args[0].value)
+        if date is not None:
+            with Session(engine) as session:
+                records = session.query(Record).order_by(Record.datetime).join(
+                    Section).where(
+                    Section.user_id == event.chat_id,
+                    extract('year', Record.datetime) == date.year,
+                    extract('month', Record.datetime) == date.month,
+                    extract('day', Record.datetime) == date.day).all()
+                if records:
+                    msg = f"Все записи за {command.args[0].original_value}\n\n"
+                    for r in records:
+                        add_to_msg = record_stringify(r) + '\n\n'
+                        if len(msg + add_to_msg) > 4096:
+                            await bot.send_message(event.chat_id, msg)
+                            msg = add_to_msg
+                            continue
+                        msg += add_to_msg
+                else:
+                    msg = f"Нет записей за указанную дату."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    elif check_pattern(command.args, 'date date'):
+        date1 = get_date(command.args[0].value)
+        date2 = get_date(command.args[1].value)
+        if date1 is not None and date2 is not None:
+            with Session(engine) as session:
+                records = session.query(Record).order_by(Record.datetime).join(
+                    Section).where(
+                    Section.user_id == event.chat_id,
+                    Record.datetime.between(date1, date2)).all()
+                if records:
+                    msg = f"Все записи за {command.args[0].original_value} - {command.args[1].original_value}\n\n"
+                    for r in records:
+                        add_to_msg = record_stringify(r) + '\n\n'
+                        if len(msg + add_to_msg) > 4096:
+                            await bot.send_message(event.chat_id, msg)
+                            msg = add_to_msg
+                            continue
+                        msg += add_to_msg
+                else:
+                    msg = f"Нет записей за указанный диапазон дней."
+        else:
+            msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                  'символа "`/`" может быть "`-`" либо "`.`".'
+    else:
+        msg = f"Неверный набор аргументов для команды просмотра записей! Отправьте /start, чтобы " \
               f"посмотреть список доступных аргументов."
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
