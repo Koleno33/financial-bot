@@ -2,7 +2,20 @@ import re
 import datetime
 from log import logger
 
-reserved = ["/start", "доход", "удали", "раздел ", "разделы", "валюта ", "валюты"]
+reserved = ["/start", "доход", "удали", "раздел", "разделы", "валюта", "валюты"]
+
+months = {'январь': 1,
+          'февраль': 2,
+          'март': 3,
+          'апрель': 4,
+          'май': 5,
+          'июнь': 6,
+          'июль': 7,
+          'август': 8,
+          'сентябрь': 9,
+          'октябрь': 10,
+          'ноябрь': 11,
+          'декабрь': 12}
 
 regexp = {
     "time":   re.compile(r'^\b\d{1,2}[.:]\d{2}\b$'),
@@ -48,6 +61,29 @@ def get_time(text: str):
         logger.debug("error parsing time: ", e, text)
         return None
 
+def get_month(text: str):
+    if text in months:
+        return months[text]
+
+    try:
+        month_n = int(text)
+        if month_n > 0 and month_n <= 12:
+            return month_n
+    except Exception:
+        return None
+
+def get_year(text: str):
+    try:
+        year = int(text)
+        if year > 0 and year <= 99:
+            return year + 2000
+        elif year >= 1970 and year <= 2100:
+            return year
+        else:
+            return None
+    except Exception:
+        return None
+
 def get_matched_type(arg):
     for reg in regexp:
         if regexp[reg].match(arg):
@@ -64,7 +100,7 @@ class Command:
     def __init__(self, full_command: str):
         command = full_command.lower().split()
         full_command = full_command.split()
-        if command[0] in [r.strip() for r in reserved]:
+        if command[0] in reserved:
             self.instruction = command[0]
             full_command.remove(full_command[0])
             command.remove(command[0])

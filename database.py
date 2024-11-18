@@ -89,8 +89,8 @@ class CurrencyName(Base):
 engine = create_engine(url="sqlite:///data.db", echo=True)
 Base.metadata.create_all(engine)
 #with Session(engine) as session:
-#    ss = session.query(Section).all()
-#    for s in ss:
-#        for name in s.sn:
-#            print(name)
-#    #print(msg)
+#    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+#        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+#        Section.user_id == 515146433, extract('month', Record.datetime) == 11).all()
+#    print(records)
+

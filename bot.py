@@ -5,7 +5,7 @@ from sqlalchemy import select, func, Date, DateTime, extract
 from database import Session, engine, User, Section, SectionName, Record, CurrencyName, Currency
 from config import read_config, config
 from log import logger
-from command import Command, Arg, reserved, get_date, get_time
+from command import Command, Arg, reserved, get_date, get_time, get_month, get_year, months
 
 answering_state = False
 
@@ -18,7 +18,8 @@ def check_pattern(args: list[Arg] | Arg, pattern: str):
     if len(args) != len(pattern):
         return False
     for i in range(len(args)):
-        if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time'):
+        if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time') and not (
+            pattern[i] == 'month' and args[i].type in ('number', 'text')):
             return False
     return True
 
@@ -29,14 +30,17 @@ def record_stringify(record: Record):
            f"**Валюта:** {', '.join(record.currency.names)};\n" \
            f"**Раздел:** {', '.join(record.section.names)}."
 
-@bot.on(telethon.events.NewMessage(pattern='/start'))
-async def handle_start_command(event):
+async def check_user(chat_id: int):
     with Session(engine) as session:
-        check_user = session.scalar(select(User).where(User.id == event.chat_id))
+        check_user = session.scalar(select(User).where(User.id == chat_id))
         if not check_user:
-            new_user = User(id=event.chat_id, date=datetime.datetime.now())
+            new_user = User(id=chat_id, date=datetime.datetime.now())
             session.add(new_user)
             session.commit()
+
+@bot.on(telethon.events.NewMessage(pattern='/start'))
+async def handle_start_command(event):
+    await check_user(event.chat_id)
     await bot.send_message(event.chat_id, "Привет! Управление ботом происходит через следующие предложения, которые"
                                           " могут быть написаны как с заглавными, так и со строчными буквами:\n\n"
                                           "`(<дата>) (<время>) <сумма> <валюта> <раздел>` - добавить запись (по умолчанию текущие дата и время)\n"
@@ -63,7 +67,202 @@ async def handle_start_command(event):
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)доход+'))
 async def handle_income_command(event):
-    await bot.send_message(event.chat_id, 'Доход')
+    command = Command(event.raw_text)
+    msg = ''
+    unknown = False
+
+    if command.instruction is not None:
+        if not command.args:
+            current_month = datetime.datetime.now().month
+            month_name = list(months.keys())[list(months.values()).index(current_month)]
+            with Session(engine) as session:
+                records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                    Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month).all()
+                if records:
+                    msg = f"Доходы со всех разделов за {month_name}\n\n"
+                    for i, r in enumerate(records):
+                        cnames = session.query(CurrencyName.name).join(Currency).order_by(
+                            CurrencyName.added_datetime).where(CurrencyName.currency_id == r[1]).all()
+                        names = [name[0] for name in cnames]
+                        msg += f"**Валюта**: {', '.join(names)}\n"
+                        msg += f"**Сумма**: {r[0]}\n\n"
+                else:
+                    msg = f"Нет доходов."
+        elif check_pattern(command.args, 'text') and not command.args[0].value in months.keys():
+            current_month = datetime.datetime.now().month
+            month_name = list(months.keys())[list(months.values()).index(current_month)]
+            with Session(engine) as session:
+                records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                    Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month,
+                    Section.names.like(command.args[0].value)).all()
+                if records:
+                    msg = f"Доходы в разделе **{command.args[0].original_value}** за {month_name}\n\n"
+                    for i, r in enumerate(records):
+                        cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                            CurrencyName.currency_id == r[1]).all()
+                        names = [name[0] for name in cnames]
+                        msg += f"**Валюта**: {', '.join(names)}\n"
+                        msg += f"**Сумма**: {r[0]}\n\n"
+                else:
+                    msg = f"Нет доходов."
+        elif check_pattern(command.args, 'month'):
+            month = get_month(command.args[0].value)
+            if month is not None:
+                month_name = list(months.keys())[list(months.values()).index(month)]
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month).all()
+                    if records:
+                        msg = f"Доходы со всех разделов за {month_name}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет доходов."
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'date'):
+            date = get_date(command.args[0].value)
+            if date is not None:
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id,
+                        extract('year', Record.datetime) == date.year,
+                        extract('month', Record.datetime) == date.month,
+                        extract('day', Record.datetime) == date.day).all()
+                    if records:
+                        msg = f"Доходы со всех разделов за {command.args[0].original_value}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет доходов."
+            else:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
+        elif check_pattern(command.args, 'month text'):
+            month = get_month(command.args[0].value)
+            if month is not None:
+                month_name = list(months.keys())[list(months.values()).index(month)]
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                        Section.names.like(command.args[1].value)).all()
+                    if records:
+                        msg = f"Доходы в разделе {command.args[1].original_value} за {month_name}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет доходов."
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'date text'):
+            date = get_date(command.args[0].value)
+            if date is not None:
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id,
+                        extract('year', Record.datetime) == date.year,
+                        extract('month', Record.datetime) == date.month,
+                        extract('day', Record.datetime) == date.day,
+                        Section.names.like(command.args[1].value)).all()
+                    if records:
+                        msg = f"Доходы в разделе {command.args[1].original_value} за " \
+                              f"{command.args[0].original_value}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет доходов."
+            else:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
+        elif check_pattern(command.args, 'month number'):
+            month = get_month(command.args[0].value)
+            year = get_year(command.args[1].value)
+            if month is not None:
+                if year is not None:
+                    month_name = list(months.keys())[list(months.values()).index(month)]
+                    with Session(engine) as session:
+                        records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                            Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                            Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                            extract('year', Record.datetime)).all()
+                        if records:
+                            msg = f"Доходы со всех разделов за {month_name} {year} года\n\n"
+                            for i, r in enumerate(records):
+                                cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                    CurrencyName.currency_id == r[1]).all()
+                                names = [name[0] for name in cnames]
+                                msg += f"**Валюта**: {', '.join(names)}\n"
+                                msg += f"**Сумма**: {r[0]}\n\n"
+                        else:
+                            msg = f"Нет доходов."
+                else:
+                    msg = 'Неверно задан аргумент: год. Он задаётся либо полным числом (например, **2024**) ' \
+                          'либо неполным числом (например, **24**).'
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'month number text'):
+            month = get_month(command.args[0].value)
+            year = get_year(command.args[1].value)
+            if month is not None:
+                if year is not None:
+                    month_name = list(months.keys())[list(months.values()).index(month)]
+                    with Session(engine) as session:
+                        records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                            Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                            Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                            extract('year', Record.datetime),
+                            Section.names.like(command.args[2].value)).all()
+                        if records:
+                            msg = f"Доходы в разделе {command.args[2].original_value} за {month_name} {year} года\n\n"
+                            for i, r in enumerate(records):
+                                cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                    CurrencyName.currency_id == r[1]).all()
+                                names = [name[0] for name in cnames]
+                                msg += f"**Валюта**: {', '.join(names)}\n"
+                                msg += f"**Сумма**: {r[0]}\n\n"
+                        else:
+                            msg = f"Нет доходов."
+                else:
+                    msg = 'Неверно задан аргумент: год. Он задаётся либо полным числом (например, **2024**) ' \
+                          'либо неполным числом (например, **24**).'
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        else:
+            unknown = True
+    else:
+        unknown = True
+
+    if unknown:
+        msg = f"Неверный набор аргументов для команды `доход`! Отправьте /start, чтобы посмотреть список " \
+              f"доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)удали+'))
 async def handle_delete_command(event):
@@ -72,10 +271,11 @@ async def handle_delete_command(event):
 
     if not command.args:
         with Session(engine) as session:
-            last_record = session.query(Record, func.max(Record.added_datetime)).one_or_none()
-            if last_record:
-                msg = f"Последняя добавленная запись была успешно удалена: \n\n{record_stringify(last_record[0])}"
-                session.delete(last_record[0])
+            last_record = session.query(Record).join(Section).order_by(Record.added_datetime.desc()).where(
+                Section.user_id == event.chat_id).first()
+            if last_record is not None:
+                msg = f"Последняя добавленная запись была успешно удалена: \n\n{record_stringify(last_record)}"
+                session.delete(last_record)
                 session.commit()
             else:
                 msg = f"Не было найдено ни одной записи."
@@ -92,9 +292,10 @@ async def handle_delete_command(event):
                         extract('hour', Record.datetime) == datetime_o.hour,
                         extract('minute', Record.datetime) == datetime_o.minute,
                         Record.amount == float(command.args[2].value),
-                        Currency.names.contains(command.args[3].value),
-                        Section.names.contains(command.args[4].value))\
-                    .one_or_none()
+                        Currency.names.like(command.args[3].value),
+                        Section.names.like(command.args[4].value),
+                        Section.user_id == event.chat_id)\
+                    .first()
                 if found_record is not None:
                     msg = f"Была удалена следующая запись: \n\n{record_stringify(found_record)}"
                     session.delete(found_record)
@@ -114,9 +315,10 @@ async def handle_delete_command(event):
             date1 = datetime.datetime.combine(date1, datetime.datetime.min.time())
             date2 = datetime.datetime.combine(date2, datetime.datetime.min.time())
             with Session(engine) as session:
-                to_delete = session.query(Record.id).join(Section).filter(Section.names.contains(
-                    command.args[2].value), Record.datetime.between(date1, date2))
-                found_cnt = session.query(Record).filter(Record.id.in_(to_delete.subquery())).delete()
+                to_delete = session.query(Record.id).join(Section).filter(Section.names.like(
+                    command.args[2].value), Record.datetime.between(date1, date2), Section.user_id == event.chat_id)
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete)).delete()
+
                 if found_cnt:
                     session.commit()
                     msg = f"Успешно удалено {found_cnt} записей с {command.args[0].value} по " \
@@ -133,7 +335,10 @@ async def handle_delete_command(event):
             date1 = datetime.datetime.combine(date1, datetime.datetime.min.time())
             date2 = datetime.datetime.combine(date2, datetime.datetime.min.time())
             with Session(engine) as session:
-                found_cnt = session.query(Record).filter(Record.datetime.between(date1, date2)).delete()
+                to_delete = session.query(Record.id).join(Section).filter(Section.user_id == event.chat_id,
+                                                                       Record.datetime.between(date1, date2))
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete)).delete()
+
                 if found_cnt:
                     session.commit()
                     msg = f"Успешно удалено {found_cnt} записей с {command.args[0].value} по " \
@@ -150,8 +355,10 @@ async def handle_delete_command(event):
                 to_delete = session.query(Record.id).join(Section).filter(extract('year', Record.datetime) == date.year,
                       extract('month', Record.datetime) == date.month,
                       extract('day', Record.datetime) == date.day,
-                      Section.names.contains(command.args[1].value))
-                found_cnt = session.query(Record).filter(Record.id.in_(to_delete.subquery())).delete()
+                      Section.names.like(command.args[1].value),
+                      Section.user_id == event.chat_id)
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete)).delete()
+
                 if found_cnt:
                     session.commit()
                     msg = f"Успешно удалено {found_cnt} записей из раздела {command.args[1].original_value} " \
@@ -165,9 +372,12 @@ async def handle_delete_command(event):
         date = get_date(command.args[0].value)
         if date is not None:
             with Session(engine) as session:
-                found_cnt = session.query(Record).filter(extract('year', Record.datetime) == date.year,
+                to_delete = session.query(Record.id).join(Section).filter(extract('year', Record.datetime) == date.year,
                       extract('month', Record.datetime) == date.month,
-                      extract('day', Record.datetime) == date.day).delete()
+                      extract('day', Record.datetime) == date.day,
+                      Section.user_id == event.chat_id)
+                found_cnt = session.query(Record).filter(Record.id.in_(to_delete)).delete()
+
                 if found_cnt:
                     session.commit()
                     msg = f"Успешно удалено {found_cnt} записей за {command.args[0].value}."
@@ -182,10 +392,15 @@ async def handle_delete_command(event):
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
-@bot.on(telethon.events.NewMessage(pattern='(?i)раздел +'))
+@bot.on(telethon.events.NewMessage(pattern='(?i)раздел+(?!ы)'))
 async def handle_section_command(event):
     command = Command(event.raw_text)
     msg = ''
+
+    if command.args[0].original_value in list(months.keys()) + reserved:
+        msg = 'Нельзя использовать ключевое слово в качестве названия для раздела.'
+        await bot.send_message(event.chat_id, msg, parse_mode='md')
+        return
 
     if check_pattern(command.args, 'text text'):
         global answering_state
@@ -193,26 +408,30 @@ async def handle_section_command(event):
         new_name = command.args[1].value
         with Session(engine) as session:
             checked_section = session.query(Section).filter(Section.user_id == event.chat_id,
-                                            Section.names.contains(section_name)).one_or_none()
+                                            Section.names.like(section_name)).first()
             checked_synonym = session.query(Section).filter(Section.user_id == event.chat_id,
-                                            Section.names.contains(new_name)).one_or_none()
+                                            Section.names.like(new_name)).first()
             if checked_section is not None:
                 if checked_synonym is not None:
                     if len(checked_synonym.sn) > 1:
-                        sn = session.query(SectionName).filter(SectionName.name == new_name).one_or_none()
+                        sn = session.query(SectionName).join(Section).filter(SectionName.name == new_name,
+                                                                             Section.user_id == event.chat_id).first()
                         sn.section_id = checked_section.id
                         new_synonyms = list(set(checked_synonym.names) - set([new_name]))
-                        msg = f"Слово **{new_name}** теперь является синонимом для раздела **{section_name}**. " \
+                        msg = f"Слово **{command.args[1].original_value}** теперь является синонимом для раздела " \
+                              f"**{command.args[0].original_value}**. " \
                               f"У раздела **{new_synonyms[0]}** остались следующие синонимы:\n" \
                               f"{', '.join(new_synonyms)}"
                     else:
                         try:
                             async with bot.conversation(event.chat_id) as conv:
                                 answering_state = True
-                                await conv.send_message(f'У раздела **{new_name}** есть только одно название. '
-                                        f'Присвоение этого названия разделу **{section_name}** повлечет перенесение '
-                                        f'всех записей из раздела **{new_name}** в раздел **{section_name}**. '
-                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
+                                await conv.send_message(f'У раздела **{command.args[1].original_value}** есть только ' \
+                                                        f'одно название. Присвоение этого названия разделу ' \
+                                                        f'**{command.args[0].original_value}** повлечет перенесение ' \
+                                                        f'всех записей из раздела **{command.args[1].original_value}**'\
+                                                        f' в раздел **{command.args[0].original_value}**. '
+                                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
                                 text = await conv.get_response()
                                 text = text.raw_text
                                 if text is not None and text.lower() in ('да', 'д'):
@@ -220,8 +439,9 @@ async def handle_section_command(event):
                                         sn.section_id = checked_section.id
                                     for record in checked_synonym.records:
                                         record.section_id = checked_section.id
-                                    msg = f"Раздел **{new_name}** успешно добавлен в список синонимов раздела " \
-                                          f"**{section_name}**, а записи в этих разделах объединены."
+                                    msg = f"Раздел **{command.args[1].original_value}** успешно добавлен в список " \
+                                          f"синонимов раздела " \
+                                          f"**{command.args[0].original_value}**, а записи в этих разделах объединены."
                                 else:
                                     msg = "Раздел не был переименован."
                                 answering_state = False
@@ -231,9 +451,10 @@ async def handle_section_command(event):
                     new_sectionname_o = SectionName(section_id=checked_section.id, name=new_name,
                                                     added_datetime=datetime.datetime.now())
                     session.add(new_sectionname_o)
-                    msg = f"Новый синоним **{new_name}** для раздела **{section_name}** успешно добавлен."
+                    msg = f"Новый синоним **{command.args[1].original_value}** для раздела " \
+                          f"**{command.args[0].original_value}** успешно добавлен."
             else:
-                msg = f"Не найдено раздела с названием **{section_name}**."
+                msg = f"Не найдено раздела с названием **{command.args[0].original_value}**."
             session.commit()
     else:
         msg = f"Неверный набор аргументов для команды добавления названия раздела! Отправьте /start, чтобы " \
@@ -241,31 +462,40 @@ async def handle_section_command(event):
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
-@bot.on(telethon.events.NewMessage(pattern='(?i)^разделы$'))
+@bot.on(telethon.events.NewMessage(pattern='(?i)разделы+'))
 async def handle_sections_command(event):
     command = Command(event.raw_text)
-
-    with Session(engine) as session:
-        sections = session.query(Section).where(Section.user_id == event.chat_id).all()
-        if sections:
-            msg = f"Список разделов:\n\n"
-            for i, s in enumerate(sections):
-                snames = session.query(SectionName.name).order_by(SectionName.added_datetime).where(
-                    SectionName.section_id == s.id).all()
-                if not len(snames):
-                    continue
-                names = [name[0] for name in snames]
-                msg += f"{i + 1}. **{names[0]}** " \
-                       f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
-        else:
-            msg = f"Не найдено ни одного раздела."
+    msg = ''
+    if command.instruction is not None and not command.args:
+        with Session(engine) as session:
+            sections = session.query(Section).where(Section.user_id == event.chat_id).all()
+            if sections:
+                msg = f"Список разделов:\n\n"
+                for i, s in enumerate(sections):
+                    snames = session.query(SectionName.name).join(Section).order_by(SectionName.added_datetime).where(
+                        SectionName.section_id == s.id, Section.user_id == event.chat_id).all()
+                    if not len(snames):
+                        continue
+                    names = [name[0] for name in snames]
+                    msg += f"{i + 1}. **{names[0]}** " \
+                           f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
+            else:
+                msg = f"Не найдено ни одного раздела."
+    else:
+        msg = f"Неверный набор аргументов для команды просмотра разделов! Отправьте /start, чтобы " \
+              f"посмотреть список доступных аргументов."
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
-@bot.on(telethon.events.NewMessage(pattern='(?i)валюта +'))
+@bot.on(telethon.events.NewMessage(pattern='(?i)валюта+'))
 async def handle_currency_command(event):
     command = Command(event.raw_text)
     msg = ''
+
+    if command.args[0].original_value in list(months.keys()) + reserved:
+        msg = 'Нельзя использовать ключевое слово в качестве названия для валюты.'
+        await bot.send_message(event.chat_id, msg, parse_mode='md')
+        return
 
     if check_pattern(command.args, 'text text'):
         global answering_state
@@ -273,27 +503,30 @@ async def handle_currency_command(event):
         new_name = command.args[1].value
         with Session(engine) as session:
             checked_currency = session.query(Currency).filter(Currency.user_id == event.chat_id,
-                                                              Currency.names.contains(currency_name)).one_or_none()
+                                                              Currency.names.like(currency_name)).first()
             checked_synonym = session.query(Currency).filter(Currency.user_id == event.chat_id,
-                                            Currency.names.contains(new_name)).one_or_none()
+                                            Currency.names.like(new_name)).first()
             if checked_currency is not None:
                 if checked_synonym is not None:
-                    print(checked_synonym)
                     if len(checked_synonym.cn) > 1:
-                        cn = session.query(CurrencyName).filter(CurrencyName.name == new_name).one_or_none()
+                        cn = session.query(CurrencyName).join(Currency).filter(CurrencyName.name == new_name,
+                                                                            Currency.user_id == event.chat_id).first()
                         cn.currency_id = checked_currency.id
                         new_synonyms = list(set(checked_synonym.names) - set([new_name]))
-                        msg = f"Слово **{new_name}** теперь является синонимом для валюты **{currency_name}**. " \
+                        msg = f"Слово **{command.args[1].original_value}** теперь является синонимом для валюты " \
+                              f"**{command.args[0].original_value}**. " \
                               f"У валюты **{new_synonyms[0]}** остались следующие синонимы:\n" \
                               f"{', '.join(new_synonyms)}"
                     else:
                         try:
                             async with bot.conversation(event.chat_id) as conv:
                                 answering_state = True
-                                await conv.send_message(f'У валюты **{new_name}** есть только одно название. '
-                                        f'Присвоение этого названия валюте **{currency_name}** повлечет перенесение '
-                                        f'всех записей с валютой **{new_name}** к валюте **{currency_name}**. '
-                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
+                                await conv.send_message(f'У валюты **{command.args[1].original_value}** есть только ' \
+                                                        f'одно название. Присвоение этого названия валюте ' \
+                                                        f'**{command.args[0].original_value}** повлечет перенесение ' \
+                                                        f'всех записей с валютой **{command.args[1].original_value}** '\
+                                                        f'к валюте **{command.args[0].original_value}**. '\
+                                                        f'Хотите продолжить? (Да/Нет)', parse_mode='md')
                                 text = await conv.get_response()
                                 text = text.raw_text
                                 if text is not None and text.lower() in ('да', 'д'):
@@ -301,8 +534,9 @@ async def handle_currency_command(event):
                                         cn.currency_id = checked_currency.id
                                     for record in checked_synonym.records:
                                         record.currency_id = checked_currency.id
-                                    msg = f"Валюта **{new_name}** успешно добавлена в список синонимов валюты " \
-                                          f"**{currency_name}**, а записи с этими валютами объединены."
+                                    msg = f"Валюта **{command.args[1].original_value}** успешно добавлена в список " \
+                                          f"синонимов валюты **{command.args[0].original_value}**, а записи с этими " \
+                                          f"валютами объединены."
                                 else:
                                     msg = "Валюта не была переименована."
                                 answering_state = False
@@ -312,7 +546,8 @@ async def handle_currency_command(event):
                     new_currencyname_o = CurrencyName(currency_id=checked_currency.id, name=new_name,
                                                       added_datetime=datetime.datetime.now())
                     session.add(new_currencyname_o)
-                    msg = f"Новый синоним **{new_name}** для валюты **{currency_name}** успешно добавлен."
+                    msg = f"Новый синоним **{command.args[1].original_value}** для валюты " \
+                          f"**{command.args[0].original_value}** успешно добавлен."
             else:
                 msg = f"Не найдено валюты с названием **{currency_name}**."
             session.commit()
@@ -322,32 +557,37 @@ async def handle_currency_command(event):
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
-@bot.on(telethon.events.NewMessage(pattern='(?i)^валюты$'))
+@bot.on(telethon.events.NewMessage(pattern='(?i)валюты'))
 async def handle_currencies_command(event):
     command = Command(event.raw_text)
-
-    with Session(engine) as session:
-        currencies = session.query(Currency).where(Currency.user_id == event.chat_id).all()
-        if currencies:
-            msg = f"Список валют:\n\n"
-            for i, c in enumerate(currencies):
-                snames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
-                    CurrencyName.currency_id == c.id).all()
-                if not len(snames):
-                    continue
-                names = [name[0] for name in snames]
-                msg += f"{i + 1}. **{names[0]}** " \
-                       f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
-        else:
-            msg = f"Не найдено ни одной валюты."
+    msg = ''
+    if command.instruction is not None and not command.args:
+        with Session(engine) as session:
+            currencies = session.query(Currency).where(Currency.user_id == event.chat_id).all()
+            if currencies:
+                msg = f"Список валют:\n\n"
+                for i, c in enumerate(currencies):
+                    snames = session.query(CurrencyName.name).join(Currency).order_by(CurrencyName.added_datetime).where(
+                        CurrencyName.currency_id == c.id, Currency.user_id == event.chat_id).all()
+                    if not len(snames):
+                        continue
+                    names = [name[0] for name in snames]
+                    msg += f"{i + 1}. **{names[0]}** " \
+                           f"{'(' + ', '.join([name for name in names[1:]]) + ')' if names[1:] else ''}\n"
+            else:
+                msg = f"Не найдено ни одной валюты."
+    else:
+        msg = f"Неверный набор аргументов для команды просмотра валют! Отправьте /start, чтобы " \
+              f"посмотреть список доступных аргументов."
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
 async def filter_another_commands(event):
+    await check_user(event.chat_id)
     if answering_state:
         return False
     for word in reserved:
-        if word in event.raw_text.lower():
+        if event.raw_text.lower().startswith(word):
             return False
     return True
 
@@ -355,6 +595,7 @@ async def filter_another_commands(event):
 async def handle_another_command(event):
     command = Command(event.raw_text)
     msg = ''
+    unknown = False
     date, time, amount, currency, section = None, None, None, None, None
 
     if check_pattern(command.args, 'date time number text text'):
@@ -422,14 +663,16 @@ async def handle_another_command(event):
         currency = command.args[2].value
         section = command.args[3].value
     else:
-        msg = 'Неизвестная команда! Отправьте /start, чтобы посмотреть список актуальных команд.'
+        unknown = True
 
     forbidden_names = False
-    if any(name in reserved for name in (currency, section)):
+    if any(name in list(months.keys()) + reserved for name in (currency, section)):
         forbidden_names = True
         msg = 'Нельзя использовать ключевое слово в качестве названия для валюты или раздела.'
 
-    if None in (date, time, amount, currency, section):
+    if unknown:
+        msg = 'Неизвестная команда! Отправьте /start, чтобы посмотреть список актуальных команд.'
+    elif None in (date, time, amount, currency, section):
         if None in (amount, currency, section):
             msg = f"Неверный набор аргументов для команды добавления! Отправьте /start, чтобы посмотреть список " \
                   f"доступных аргументов."
@@ -437,9 +680,9 @@ async def handle_another_command(event):
         with Session(engine) as session:
             res_datetime = datetime.datetime.combine(date, time)
             checked_section = session.query(Section).filter(Section.user_id == event.chat_id,
-                                                            Section.names.contains(section)).one_or_none()
+                                                            Section.names.like(section)).first()
             checked_currency = session.query(Currency).filter(Currency.user_id == event.chat_id,
-                                                              Currency.names.contains(currency)).one_or_none()
+                                                              Currency.names.like(currency)).first()
             if checked_section is None:
                 checked_section = Section(user_id=event.chat_id)
                 session.add(checked_section)
