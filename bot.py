@@ -6,6 +6,7 @@ from database import Session, engine, User, Section, SectionName, Record, Curren
 from config import read_config, config
 from log import logger
 from command import Command, Arg, reserved, get_date, get_time, get_month, get_year, months
+from exworker import ExcelWorker
 
 answering_state = False
 
@@ -16,19 +17,29 @@ def check_pattern(args: list[Arg] | Arg, pattern: str):
     if type(args) is Arg:
         args = [args]
     if len(args) != len(pattern):
-        return False
+        if pattern[-1] != 'comment':
+            return False
+        elif len(args) < len(pattern) - 1:
+            return False
     for i in range(len(args)):
+        if pattern[i] == 'comment':
+            return True
         if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time') and not (
             pattern[i] == 'month' and args[i].type in ('number', 'text')):
             return False
     return True
 
 def record_stringify(record: Record):
+    if record.comment:
+        comment = f';\n**Комментарий:** {record.comment}'
+    else:
+        comment = '.'
     return f"**Дата:** {record.datetime.strftime('%d.%m.%y')};\n" \
            f"**Время:** {record.datetime.strftime('%H:%M')};\n" \
            f"**Сумма:** {record.amount};\n" \
            f"**Валюта:** {', '.join(record.currency.names)};\n" \
-           f"**Раздел:** {', '.join(record.section.names)}."
+           f"**Раздел:** {', '.join(record.section.names)}" \
+           f"{comment}"
 
 async def check_user(chat_id: int):
     with Session(engine) as session:
@@ -43,7 +54,7 @@ async def handle_start_command(event):
     await check_user(event.chat_id)
     await bot.send_message(event.chat_id, "Привет! Управление ботом происходит через следующие предложения, которые"
                                           " могут быть написаны как с заглавными, так и со строчными буквами:\n\n"
-                                          "`(<дата>) (<время>) <сумма> <валюта> <раздел>` - добавить запись (по умолчанию текущие дата и время)\n"
+                                          "`(<дата>) (<время>) <сумма> <валюта> <раздел> (<комментарий>)` - добавить запись (по умолчанию текущие дата и время)\n"
                                           "`Доход (<раздел>)` - узнать сведения о доходах за этот месяц\n"
                                           "`Доход <дата> (<раздел>)` - узнать сведения о доходах за конкретный день\n"
                                           "`Доход <месяц> (<раздел>)` - узнать доход за конкретный месяц\n"
@@ -58,6 +69,7 @@ async def handle_start_command(event):
                                           "`Раздел <название раздела> <синоним>` - создание синонимов для разделов\n"
                                           "`Валюты` - показать текущие валюты\n"
                                           "`Валюта <название валюты> <синоним>` - создание синонимов для валют\n"
+                                          "`Отчет` - отослать отчет по доходам в виде Excel-документа\n"
                                           "\n"
                                           "То, что находится в скобках () может упускаться. Например: `доход`"
                                           "- доход за все разделы, а `доход первая` - доход в конкретном разделе за этот месяц.\n\n"
@@ -210,7 +222,7 @@ async def handle_income_command(event):
                         records = session.query(func.sum(Record.amount), Record.currency_id).join(
                             Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                             Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
-                            extract('year', Record.datetime)).all()
+                            extract('year', Record.datetime) == year).all()
                         if records:
                             msg = f"Доходы со всех разделов за {month_name} {year} года\n\n"
                             for i, r in enumerate(records):
@@ -237,7 +249,7 @@ async def handle_income_command(event):
                         records = session.query(func.sum(Record.amount), Record.currency_id).join(
                             Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                             Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
-                            extract('year', Record.datetime),
+                            extract('year', Record.datetime) == year,
                             Section.names.like(command.args[2].value)).all()
                         if records:
                             msg = f"Доходы в разделе {command.args[2].original_value} за {month_name} {year} года\n\n"
@@ -606,6 +618,30 @@ async def handle_currencies_command(event):
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
 
+@bot.on(telethon.events.NewMessage(pattern='(?i)отч[её]т'))
+async def handle_report_command(event):
+    command = Command(event.raw_text)
+
+    if command.instruction is not None and not command.args:
+        with Session(engine) as session:
+            records = session.query(Record).join(Section).where(Section.user_id == event.chat_id).order_by(
+                Record.id).all()
+            if not records:
+                await bot.send_message(event.chat_id, "Отчет не может быть сформирован: не найдено ни одной записи.")
+                return
+            try:
+                ew = ExcelWorker(records)
+                file = ew.get_bytes()
+                file.name = f"Отчет-{datetime.datetime.now()}.xlsx"
+                file.seek(0)
+                await bot.send_message(event.chat_id, 'Отчет успешно сформирован.', parse_mode='md', file=file)
+            except Exception as e:
+                await bot.send_message(event.chat_id, "При формировании отчета возникла ошибка.")
+    else:
+        msg = f"Команда `Отчет` должна вызываться без аргументов."
+        await bot.send_message(event.chat_id, msg)
+
+
 @bot.on(telethon.events.NewMessage(pattern='(?i)записи+'))
 async def handle_records_command(event):
     command = Command(event.raw_text)
@@ -678,13 +714,16 @@ async def handle_another_command(event):
     command = Command(event.raw_text)
     msg = ''
     unknown = False
-    date, time, amount, currency, section = None, None, None, None, None
+    date, time, amount, currency, section, comment = None, None, None, None, None, None
 
-    if check_pattern(command.args, 'date time number text text'):
+    if check_pattern(command.args, 'date time number text text comment'):
         date = get_date(command.args[0].value)
+        comment = ' '.join([arg.original_value for arg in command.args[5:]])
         msg = f'Добавил **{command.args[2].value} {command.args[3].original_value}** на дату ' \
               f'**{command.args[0].value}** ' \
               f'и время **{command.args[1].value}** в раздел **{command.args[4].original_value}**.'
+        if comment:
+            msg += f" Комментарий: {comment}"
         if date is None:
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
@@ -699,11 +738,14 @@ async def handle_another_command(event):
             logger.debug(e)
         currency = command.args[3].value
         section = command.args[4].value
-    elif check_pattern(command.args, 'number text text'):
+    elif check_pattern(command.args, 'number text text comment'):
         now = datetime.datetime.now()
+        comment = ' '.join([arg.original_value for arg in command.args[3:]])
         msg = f'Добавил **{command.args[0].value} {command.args[1].original_value}** на сегодня ' \
               f'**({now.strftime("%d.%m.%y")})** и на текущее время **({now.strftime("%H:%M")})** в раздел ' \
               f'**{command.args[2].original_value}**.'
+        if comment:
+            msg += f" Комментарий: {comment}"
         date = datetime.datetime.now().date()
         time = datetime.datetime.now().time()
         try:
@@ -712,12 +754,15 @@ async def handle_another_command(event):
             logger.debug(e)
         currency = command.args[1].value
         section = command.args[2].value
-    elif check_pattern(command.args, 'date number text text'):
+    elif check_pattern(command.args, 'date number text text comment'):
         date = get_date(command.args[0].value)
         now = datetime.datetime.now()
+        comment = ' '.join([arg.original_value for arg in command.args[4:]])
         msg = f'Добавил **{command.args[1].value} {command.args[2].original_value}** на дату ' \
               f'**{command.args[0].value}** ' \
               f'и на текущее время **({now.strftime("%H:%M")})** в раздел **{command.args[3].original_value}**.'
+        if comment:
+            msg += f" Комментарий: {comment}"
         if date is None:
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
@@ -728,11 +773,14 @@ async def handle_another_command(event):
             logger.debug(e)
         currency = command.args[2].value
         section = command.args[3].value
-    elif check_pattern(command.args, 'time number text text'):
+    elif check_pattern(command.args, 'time number text text comment'):
         now = datetime.datetime.now()
+        comment = ' '.join([arg.original_value for arg in command.args[4:]])
         msg = f'Добавил **{command.args[1].value} {command.args[2].original_value}** на сегодня ' \
               f'**({now.strftime("%d.%m.%y")})** и на время **{command.args[0].value}** в раздел ' \
               f'**{command.args[3].original_value}**.'
+        if comment:
+            msg += f" Комментарий: {comment}"
         time = get_time(command.args[0].value)
         if time is None:
             msg = 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
@@ -780,7 +828,8 @@ async def handle_another_command(event):
                                                  added_datetime=datetime.datetime.now())
                 session.add(new_currency_name)
             session.add(Record(section_id=checked_section.id, datetime=res_datetime, amount=amount,
-                               currency_id=checked_currency.id, added_datetime=datetime.datetime.now()))
+                               currency_id=checked_currency.id, added_datetime=datetime.datetime.now(),
+                               comment=comment))
             session.commit()
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')

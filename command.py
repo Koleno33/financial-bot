@@ -2,7 +2,7 @@ import re
 import datetime
 from log import logger
 
-reserved = ["/start", "доход", "удали", "раздел", "разделы", "валюта", "валюты", "записи"]
+reserved = ["/start", "доход", "удали", "раздел", "разделы", "валюта", "валюты", "записи", "отчет", "отчёт"]
 
 months = {'январь': 1,
           'февраль': 2,
@@ -98,6 +98,7 @@ class Arg:
 
 class Command:
     def __init__(self, full_command: str):
+        self.full_command = full_command
         command = full_command.lower().split()
         full_command = full_command.split()
         if command[0] in reserved:

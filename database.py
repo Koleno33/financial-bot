@@ -57,6 +57,7 @@ class Record(Base):
     datetime: Mapped[datetime] = mapped_column(DateTime)
     amount: Mapped[float] = mapped_column()
     added_datetime: Mapped[datetime] = mapped_column(DateTime)
+    comment: Mapped[str] = mapped_column(nullable=False)
 
     section: Mapped["Section"] = relationship(back_populates="records")
     currency: Mapped["Currency"] = relationship(back_populates="records")
