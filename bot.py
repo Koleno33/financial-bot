@@ -620,22 +620,46 @@ async def handle_currencies_command(event):
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)отч[её]т'))
 async def handle_report_command(event):
+    async def get_section_currencies(records: list[Record]):
+        result_dict = {}
+
+        for record in records:
+            first_section_name = record.section.names[0] if record.section else None
+
+            if first_section_name:
+                if first_section_name not in result_dict:
+                    result_dict[first_section_name] = []
+
+                if record.currency.cn[0] not in result_dict[first_section_name]:
+                    result_dict[first_section_name].append(record.currency.cn[0])
+
+        for section in result_dict:
+            result_dict[section].sort(key=lambda cur: cur.added_datetime)
+            result_dict[section] = [cur.name for cur in result_dict[section]]
+
+        return result_dict
+
+
     command = Command(event.raw_text)
 
     if command.instruction is not None and not command.args:
         with Session(engine) as session:
-            records = session.query(Record).join(Section).where(Section.user_id == event.chat_id).order_by(
-                Record.id).all()
+            records = session.query(Record).join(Section).join(SectionName).join(Currency).join(
+                CurrencyName).where(Section.user_id == event.chat_id).order_by(
+                SectionName.added_datetime, Record.datetime, CurrencyName.added_datetime).all()
+            years = sorted(list(set([str(r.datetime.year) for r in records])))
+            section_currencies = await get_section_currencies(records)
             if not records:
                 await bot.send_message(event.chat_id, "Отчет не может быть сформирован: не найдено ни одной записи.")
                 return
             try:
-                ew = ExcelWorker(records)
+                ew = ExcelWorker(records, years, section_currencies)
                 file = ew.get_bytes()
                 file.name = f"Отчет-{datetime.datetime.now()}.xlsx"
                 file.seek(0)
                 await bot.send_message(event.chat_id, 'Отчет успешно сформирован.', parse_mode='md', file=file)
             except Exception as e:
+                raise(e)
                 await bot.send_message(event.chat_id, "При формировании отчета возникла ошибка.")
     else:
         msg = f"Команда `Отчет` должна вызываться без аргументов."
