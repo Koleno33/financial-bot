@@ -109,7 +109,7 @@ class ExcelWorker:
                    "=IF(NOT(ISBLANK(Промежуточный!A1)),Промежуточный!B1,\"\")"
                    ])
         ws.insert_rows(6, records_length)
-        for row in ws.iter_rows(min_row=6, max_row=records_length, max_col=6):
+        for row in ws.iter_rows(min_row=6, max_row=4+records_length, max_col=6):
             find_number = int(row[0].row) - 4
             prev_number = int(row[0].row) - 1
             row[0].value = ArrayFormula(f"A{row[0].row}:A{row[0].row}",
@@ -147,8 +147,8 @@ class ExcelWorker:
             max_ind = records_length + 4
             row[0].value = f"=IF(K{row[0].row - 1}=K{row[0].row},\"\",K{row[0].row})"
             row[1].value = f"=IF(AND(L{row[1].row - 1}=L{row[1].row},H{row[1].row}=\"\"),\"\",L{row[1].row})"
-            sumifs = f"SUMIFS($E${row[2].row}:$E${max_ind},$D${row[2].row}:$D${max_ind},$L{row[2].row},$F${row[2].row}:$F${max_ind},$K{row[2].row})"
-            row[2].value = f"=IF({sumifs},{sumifs},\"\")"
+            sumifs = f"SUMIFS($E$5:$E${max_ind},$D$5:$D${max_ind},$L{row[2].row},$F$5:$F${max_ind},$K{row[2].row})"
+            row[2].value = f"=IF(AND(NOT(ISERROR($M{row[2].row})),NOT($I{row[2].row}=\"\")),{sumifs},\"\")"
             for cell in row[:3]:
                 cell.border = border
 

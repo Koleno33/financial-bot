@@ -9,10 +9,6 @@ config_struct = set((
 
 config = None
 
-class Config:
-    def __init__(self, bot_token: str):
-        self.bot_token = bot_token
-
 def read_config():
     global config
 
