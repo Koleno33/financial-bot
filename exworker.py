@@ -48,18 +48,13 @@ class ExcelWorker:
     def add_inter(self, records_length: int):
         ws = self.wb['Промежуточный']
         ws.sheet_state = "hidden"
+
         formula = f"""=_xlfn.FILTER(
           Записи!$A$2:$G${records_length + 1},
           Записи!$E$2:$E${records_length + 1}>=DATE(Сводка!$B$1,$I$2,1),
           Записи!$E$2:$E${records_length + 1}<=DATE(Сводка!$B$1,$I$2 + 1,1)
         )"""
-        #formula = f"""=_xlfn.FILTER(
-        #  Записи!$A$2:$G${records_length + 1},
-        #  (Записи!$E$2:$E${records_length + 1}>=DATE(Сводка!$B$1,$I$2,1))*
-        #  (Записи!$E$2:$E${records_length + 1}<=DATE(Сводка!$B$1,$I$2 + 1,1))*
-        #  (NOT(ISERROR(Записи!$E$2:$E${records_length + 1}))),
-        #  \"\"
-        #)"""
+
         match_instruction = '=MATCH(Сводка!B2; {"январь"; "февраль"; "март"; "апрель"; "май"; "июнь"; "июль"; ' \
                             '"август"; "сентябрь"; "октябрь"; "ноябрь"; "декабрь"}; 0)'
         ws["A1"] = ArrayFormula(f"A1:G{records_length}", formula)
@@ -126,10 +121,6 @@ class ExcelWorker:
                                         f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!B{find_number}<>\"\",IF(NOT(IFERROR(MATCH("
                                         f"Промежуточный!B{find_number},$A$5:$A{prev_number},0),0)),"
                                         f"Промежуточный!B{find_number},\"\"),\"\"),\"\"),\"\")")
-            #row[1].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!E{find_number}<>\"\",IF(OR(NOT(IFERROR(MATCH(" \
-            #               f"TEXT(Промежуточный!E{find_number},\"ДД.ММ.ГГ\"),$B$5:$B{prev_number},0),0))" \
-            #               f",A{row[0].row}<>\"\")," \
-            #               f"TEXT(Промежуточный!E{find_number},\"ДД.ММ.ГГ\"),\"\"),\"\"),\"\"),\"\")"
             row[1].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!E{find_number}<>\"\"," \
                            f"IF(OR(TEXT(Промежуточный!E{find_number - 1},\"DD.MM.YY\")<>TEXT(" \
                            f"Промежуточный!E{find_number},\"DD.MM.YY\"),A{row[0].row}<>\"\"),TEXT(" \
@@ -146,8 +137,6 @@ class ExcelWorker:
                 cell.border = border
 
         max_currencies = sum([len(section_currencies[s]) for s in section_currencies]) + 4
-        #if len(section_currencies) > 1:
-        #    max_currencies += len(section_currencies) - 1 # пустые строки между валютами
 
         ws['K5'] = ArrayFormula(f"K5:L{max_currencies}",
                                 f"=IFERROR(M5:N{max_currencies},\"\")")
@@ -183,30 +172,3 @@ class ExcelWorker:
         fifth_row = ws[5]
         for cell in fifth_row[:5]:
             cell.border = border
-        #first_width = 15
-        #last_width = 20
-        #xl_recs_end = len(records) + 1
-        #curr_names = list(set(r.currency.names[0] for r in records))
-#
-        #ws = self.wb['Сводка']
-        #ws.column_dimensions["A"].width = first_width
-        #ws.column_dimensions["N"].width = last_width
-        #ws.append(["Валюта\\Месяц", "янв.", "февр.", "мар.", "апр.", "май", "июн.", "июл.", "авг.", "сент.", "окт.",
-        #           "нояб.", "дек.", "Итого"])
-        #first_row = ws[1]
-        #first_row[0].fill = PatternFill(patternType="solid", fgColor=Color(rgb='ffc000'))
-        #for cell in first_row[1:13]:
-        #    cell.fill = PatternFill(patternType="solid", fgColor=Color(rgb='70ad47'))
-        #first_row[-1].fill = PatternFill(patternType="solid", fgColor=Color(rgb='ed7d31'))
-#
-        #ws.insert_rows(len(curr_names) + 2, len(curr_names))
-        #for row in ws.iter_rows(min_row=2, max_row=len(curr_names) + 1, max_col=14):
-        #    row[0].value = curr_names[row[0].row - 2]
-        #    row[0].fill = PatternFill(patternType="solid", fgColor=Color(rgb='ffff00'))
-        #    for i, cell in enumerate(row[1:13]):
-        #        cell.value = f'=SUMIFS(Записи!$I$2:$I${xl_recs_end},Записи!$C$2:$C${xl_recs_end},"="&' \
-        #                     f'Сводка!$A{row[0].row},Записи!$H$2:$H${xl_recs_end},{i + 1})'
-        #        cell.fill = PatternFill(patternType="solid", fgColor=Color(rgb='e2efda'))
-        #    row[-1].value = f"=SUM({row[1].coordinate}:{row[-2].coordinate})"
-        #    row[-1].fill = PatternFill(patternType="solid", fgColor=Color(rgb='f8cbad'))
-

@@ -752,7 +752,7 @@ async def handle_another_command(event):
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
         time = get_time(command.args[1].value)
-        if time is None: # datetime.datetime.combine(datetime.datetime.now().date(), datetime.datetime.now().time())
+        if time is None:
             if msg: msg += '\n'
             msg += 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
                   'символа "`.`" может быть "`:`".'
