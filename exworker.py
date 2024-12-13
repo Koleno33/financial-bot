@@ -50,9 +50,8 @@ class ExcelWorker:
         ws.sheet_state = "hidden"
         formula = f"""=_xlfn.FILTER(
           Записи!$A$2:$G${records_length + 1},
-          (Записи!$E$2:$E${records_length + 1}>=DATE(Сводка!$B$1,$I$2,1))*
-          (Записи!$E$2:$E${records_length + 1}<=DATE(Сводка!$B$1,$I$2 + 1,1)),
-          \"\"
+          Записи!$E$2:$E${records_length + 1}>=DATE(Сводка!$B$1,$I$2,1),
+          Записи!$E$2:$E${records_length + 1}<=DATE(Сводка!$B$1,$I$2 + 1,1)
         )"""
         #formula = f"""=_xlfn.FILTER(
         #  Записи!$A$2:$G${records_length + 1},
@@ -61,13 +60,16 @@ class ExcelWorker:
         #  (NOT(ISERROR(Записи!$E$2:$E${records_length + 1}))),
         #  \"\"
         #)"""
+        match_instruction = '=MATCH(Сводка!B2; {"январь"; "февраль"; "март"; "апрель"; "май"; "июнь"; "июль"; ' \
+                            '"август"; "сентябрь"; "октябрь"; "ноябрь"; "декабрь"}; 0)'
         ws["A1"] = ArrayFormula(f"A1:G{records_length}", formula)
         ws["I1"] = ArrayFormula(f"I1:I1", f"=IFERROR(A1=A{records_length},FALSE)")
-        ws["I2"] = ArrayFormula(f"I2:I2", f"=MONTH(DATEVALUE(\"01.\"&Сводка!B2&\".2024\"))")
+        ws["I2"] = ArrayFormula(f"I2:I2", match_instruction)
 
     def add_summary(self, records_length: int, years: list[int], section_currencies):
         ws = self.wb['Сводка']
         months = "январь,февраль,март,апрель,май,июнь,июль,август,сентябрь,октябрь,ноябрь,декабрь"
+        col_size = 15
 
         border = Border(
             left=Side(border_style="thin", color='FF000000'),
@@ -83,6 +85,14 @@ class ExcelWorker:
 
         ws["A1"] = "Год"
         ws["A2"] = "Месяц"
+        ws.column_dimensions["A"].width = col_size
+        ws.column_dimensions["B"].width = col_size
+        ws.column_dimensions["C"].width = col_size
+        ws.column_dimensions["D"].width = col_size
+        ws.column_dimensions["E"].width = col_size
+        ws.column_dimensions["H"].width = col_size
+        ws.column_dimensions["I"].width = col_size
+        ws.column_dimensions["J"].width = col_size
         ws.column_dimensions["F"].hidden = True
         ws.column_dimensions["K"].hidden = True
         ws.column_dimensions["L"].hidden = True
@@ -102,8 +112,8 @@ class ExcelWorker:
         ws.append([])
         ws.append(["Сеть", "Дата", "Время", "Валюта", "Сумма", "Видимое", "", "Сеть", "Валюта", "Итого"])
         ws.append(["=IF(NOT(ISBLANK(Промежуточный!A1)),Промежуточный!B1,\"\")",
-                   "=IF(NOT(ISBLANK(Промежуточный!E1)),TEXT(Промежуточный!E1,\"ДД.ММ.ГГ\"),\"\")",
-                   "=IF(NOT(ISBLANK(Промежуточный!E1)),TEXT(Промежуточный!E1,\"ЧЧ:ММ\"),\"\")",
+                   "=IF(NOT(ISBLANK(Промежуточный!E1)),TEXT(Промежуточный!E1,\"DD.MM.YY\"),\"\")",
+                   "=IF(NOT(ISBLANK(Промежуточный!E1)),TEXT(Промежуточный!E1,\"hh:mm\"),\"\")",
                    "=IF(NOT(ISBLANK(Промежуточный!C1)),Промежуточный!C1,\"\")",
                    "=IF(NOT(ISBLANK(Промежуточный!D1)),Промежуточный!D1,\"\")",
                    "=IF(NOT(ISBLANK(Промежуточный!A1)),Промежуточный!B1,\"\")"
@@ -121,13 +131,13 @@ class ExcelWorker:
             #               f",A{row[0].row}<>\"\")," \
             #               f"TEXT(Промежуточный!E{find_number},\"ДД.ММ.ГГ\"),\"\"),\"\"),\"\"),\"\")"
             row[1].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!E{find_number}<>\"\"," \
-                           f"IF(OR(TEXT(Промежуточный!E{find_number - 1},\"ДД.ММ.ГГ\")<>TEXT(" \
-                           f"Промежуточный!E{find_number},\"ДД.ММ.ГГ\"),A{row[0].row}<>\"\"),TEXT(" \
-                           f"Промежуточный!E{find_number},\"ДД.ММ.ГГ\"),\"\"),\"\"),\"\"),\"\")"
+                           f"IF(OR(TEXT(Промежуточный!E{find_number - 1},\"DD.MM.YY\")<>TEXT(" \
+                           f"Промежуточный!E{find_number},\"DD.MM.YY\"),A{row[0].row}<>\"\"),TEXT(" \
+                           f"Промежуточный!E{find_number},\"DD.MM.YY\"),\"\"),\"\"),\"\"),\"\")"
             row[2].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!E{find_number}<>\"\"," \
-                           f"TEXT(Промежуточный!E{find_number},\"ЧЧ:ММ\"),\"\"),\"\"),\"\")"
+                           f"TEXT(Промежуточный!E{find_number},\"hh:mm\"),\"\"),\"\"),\"\")"
             row[3].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!C{find_number}<>\"\"," \
-                           f"TEXT(Промежуточный!C{find_number},\"ЧЧ:ММ\"),\"\"),\"\"),\"\")"
+                           f"TEXT(Промежуточный!C{find_number},\"hh:mm\"),\"\"),\"\"),\"\")"
             row[4].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!D{find_number}<>\"\"," \
                            f"Промежуточный!D{find_number},\"\"),\"\"),\"\")"
             row[5].value = f"=IF(NOT(Промежуточный!I1),IFERROR(IF(Промежуточный!B{find_number}<>\"\"," \
