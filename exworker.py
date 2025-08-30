@@ -212,7 +212,7 @@ class ExcelWorker:
         ws['N6'] = ArrayFormula(f"N6:O{max_currencies}",
                                 f"=_xlfn.UNIQUE(Промежуточный!B1:C{records_length})")
         for row in ws.iter_rows(min_row=6, max_row=max_currencies, min_col=9, max_col=13):
-            max_ind = records_length + 4
+            max_ind = records_length + 5
             row[0].value = f"=IF(L{row[0].row - 1}=L{row[0].row},\"\",L{row[0].row})"
             row[1].value = f"=IF(AND(M{row[1].row - 1}=M{row[1].row},I{row[1].row}=\"\"),\"\",M{row[1].row})"
             sumifs = f"SUMIFS($D$6:$D${max_ind},$E$6:$E${max_ind},$M{row[2].row},$G$6:$G${max_ind},$L{row[2].row})"
