@@ -144,6 +144,10 @@ class ExcelWorker:
             cell = ws[f"{col}{6}"]
             cell.border = border
 
+        for col in "DEF":
+            cell = ws[f"{col}{6}"]
+            cell.alignment = Alignment(horizontal="right")
+
         # Основные формулы для обработки данных
         for i in range(7, 6 + records_length):
             find_number = i - 5
@@ -171,6 +175,11 @@ class ExcelWorker:
             for col in "ABCDEF":
                 cell = ws[f"{col}{i}"]
                 cell.border = border
+
+            # Применяем выравнивание по правому краю к сумме, валюте и комментарию
+            for col in "DEF":
+                cell = ws[f"{col}{i}"]
+                cell.alignment = Alignment(horizontal="right")
 
         # Обновляем стили
         first_row = ws[1]
@@ -210,4 +219,7 @@ class ExcelWorker:
             row[2].value = f"=IF(AND(NOT(ISERROR($N{row[2].row})),NOT($J{row[2].row}=\"\")),{sumifs},\"\")"
             for cell in row[:3]:
                 cell.border = border
+            for cell in row[1:3]:
+                cell.alignment = Alignment(horizontal="right")
+
 
