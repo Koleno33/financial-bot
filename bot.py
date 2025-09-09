@@ -655,7 +655,7 @@ async def handle_report_command(event):
             try:
                 ew = ExcelWorker(records, years, section_currencies)
                 file = ew.get_bytes()
-                file.name = f"Отчет-{datetime.datetime.now()}.xlsx"
+                file.name = f"Отчет-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S-%f')}.xlsx"
                 file.seek(0)
                 await bot.send_message(event.chat_id, 'Отчет успешно сформирован.', parse_mode='md', file=file)
             except Exception as e:
