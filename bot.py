@@ -92,7 +92,8 @@ async def handle_income_command(event):
             with Session(engine) as session:
                 records = session.query(func.sum(Record.amount), Record.currency_id).join(
                     Section).group_by(Record.currency_id).order_by(Record.datetime).where(
-                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month).all()
+                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month,
+                    Record.amount > 0).all()   # только доходы
                 if records:
                     msg = f"Доходы со всех разделов за {month_name}\n\n"
                     for i, r in enumerate(records):
@@ -110,7 +111,7 @@ async def handle_income_command(event):
                 records = session.query(func.sum(Record.amount), Record.currency_id).join(
                     Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                     Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month,
-                    Section.names.like(command.args[0].value)).all()
+                    Section.names.like(command.args[0].value), Record.amount > 0).all()
                 if records:
                     msg = f"Доходы в разделе **{command.args[0].original_value}** за {month_name}\n\n"
                     for i, r in enumerate(records):
@@ -128,7 +129,8 @@ async def handle_income_command(event):
                 with Session(engine) as session:
                     records = session.query(func.sum(Record.amount), Record.currency_id).join(
                         Section).group_by(Record.currency_id).order_by(Record.datetime).where(
-                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month).all()
+                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                        Record.amount > 0).all()
                     if records:
                         msg = f"Доходы со всех разделов за {month_name}\n\n"
                         for i, r in enumerate(records):
@@ -151,7 +153,8 @@ async def handle_income_command(event):
                         Section.user_id == event.chat_id,
                         extract('year', Record.datetime) == date.year,
                         extract('month', Record.datetime) == date.month,
-                        extract('day', Record.datetime) == date.day).all()
+                        extract('day', Record.datetime) == date.day,
+                        Record.amount > 0).all()
                     if records:
                         msg = f"Доходы со всех разделов за {command.args[0].original_value}\n\n"
                         for i, r in enumerate(records):
@@ -173,7 +176,7 @@ async def handle_income_command(event):
                     records = session.query(func.sum(Record.amount), Record.currency_id).join(
                         Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                         Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
-                        Section.names.like(command.args[1].value)).all()
+                        Section.names.like(command.args[1].value), Record.amount > 0).all()
                     if records:
                         msg = f"Доходы в разделе {command.args[1].original_value} за {month_name}\n\n"
                         for i, r in enumerate(records):
@@ -197,7 +200,7 @@ async def handle_income_command(event):
                         extract('year', Record.datetime) == date.year,
                         extract('month', Record.datetime) == date.month,
                         extract('day', Record.datetime) == date.day,
-                        Section.names.like(command.args[1].value)).all()
+                        Section.names.like(command.args[1].value), Record.amount > 0).all()
                     if records:
                         msg = f"Доходы в разделе {command.args[1].original_value} за " \
                               f"{command.args[0].original_value}\n\n"
@@ -222,7 +225,7 @@ async def handle_income_command(event):
                         records = session.query(func.sum(Record.amount), Record.currency_id).join(
                             Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                             Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
-                            extract('year', Record.datetime) == year).all()
+                            extract('year', Record.datetime) == year, Record.amount > 0).all()
                         if records:
                             msg = f"Доходы со всех разделов за {month_name} {year} года\n\n"
                             for i, r in enumerate(records):
@@ -250,7 +253,7 @@ async def handle_income_command(event):
                             Section).group_by(Record.currency_id).order_by(Record.datetime).where(
                             Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
                             extract('year', Record.datetime) == year,
-                            Section.names.like(command.args[2].value)).all()
+                            Section.names.like(command.args[2].value), Record.amount > 0).all()
                         if records:
                             msg = f"Доходы в разделе {command.args[2].original_value} за {month_name} {year} года\n\n"
                             for i, r in enumerate(records):
