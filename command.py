@@ -19,7 +19,7 @@ months = {'январь': 1,
 
 regexp = {
     "time":   re.compile(r'^\b\d{1,2}[.:]\d{2}\b$'),
-    "number": re.compile(r'^[+]?\d+(?:[.,]\d+)?$'), # float r'^\b[0-9]+\b$'
+    "number": re.compile(r'^[+-]?\d+(?:[.,]\d+)?$'), # float r'^\b[0-9]+\b$'
     "date":   re.compile(r'^\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\bпозавчера|\bвчера|\bсегодня|\bзавтра|\bпослезавтра)\b$'),
     "text":   re.compile(r'[\w]'),
 }
