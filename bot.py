@@ -59,6 +59,10 @@ async def handle_start_command(event):
                                           "`Доход <дата> (<раздел>)` - узнать сведения о доходах за конкретный день\n"
                                           "`Доход <месяц> (<раздел>)` - узнать доход за конкретный месяц\n"
                                           "`Доход <месяц> <год> (<раздел>)` - узнать доход за конкретный месяц конкретного года\n"
+                                          "`Расход (<раздел>)` - узнать сведения о расходах за этот месяц\n"
+                                          "`Расход <дата> (<раздел>)` - узнать сведения о расходах за конкретный день\n"
+                                          "`Расход <месяц> (<раздел>)` - узнать расход за конкретный месяц\n"
+                                          "`Расход <месяц> <год> (<раздел>)` - узнать расход за конкретный месяц конкретного года\n"
                                           "`Удали` - удалить последнюю запись\n"
                                           "`Удали <дата> (<время>) <сумма> <валюта> <раздел>` - удалить конкретную запись\n"
                                           "`Удали <дата> (<раздел>)` - удалить записи за день\n"
@@ -76,7 +80,9 @@ async def handle_start_command(event):
                                           "`<дата>` - не только дата в формате ДД.ММ.ГГ, но и слова: позавчера, вчера, сегодня,"
                                           " завтра, послезавтра\n"
                                           "`<время>` - время в формате ЧЧ.ММ (например, 17.46).\n"
-                                          "Вместо точек у даты и времени могут быть любые разделители кроме пробелов.",
+                                          "Вместо точек у даты и времени могут быть любые разделители кроме пробелов.\n\n"
+                                          "**Добавление расходов:** для записи расхода укажите отрицательное число, например `-500 руб еда`.\n"
+                                          "**Доходы** — положительные числа, **расходы** — отрицательные.",
                            parse_mode='md')
 
 @bot.on(telethon.events.NewMessage(pattern='(?i)доход+'))
@@ -277,6 +283,208 @@ async def handle_income_command(event):
 
     if unknown:
         msg = f"Неверный набор аргументов для команды `доход`! Отправьте /start, чтобы посмотреть список " \
+              f"доступных аргументов."
+
+    await bot.send_message(event.chat_id, msg, parse_mode='md')
+
+@bot.on(telethon.events.NewMessage(pattern='(?i)расход+'))
+async def handle_expense_command(event):
+    command = Command(event.raw_text)
+    msg = ''
+    unknown = False
+
+    if command.instruction is not None:
+        if not command.args:
+            current_month = datetime.datetime.now().month
+            month_name = list(months.keys())[list(months.values()).index(current_month)]
+            with Session(engine) as session:
+                records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                    Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month,
+                    Record.amount < 0).all()   # только расходы
+                if records:
+                    msg = f"Расходы со всех разделов за {month_name}\n\n"
+                    for i, r in enumerate(records):
+                        cnames = session.query(CurrencyName.name).join(Currency).order_by(
+                            CurrencyName.added_datetime).where(CurrencyName.currency_id == r[1]).all()
+                        names = [name[0] for name in cnames]
+                        msg += f"**Валюта**: {', '.join(names)}\n"
+                        msg += f"**Сумма**: {r[0]}\n\n"   # сумма уже отрицательная
+                else:
+                    msg = f"Нет расходов."
+        elif check_pattern(command.args, 'text') and not command.args[0].value in months.keys():
+            current_month = datetime.datetime.now().month
+            month_name = list(months.keys())[list(months.values()).index(current_month)]
+            with Session(engine) as session:
+                records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                    Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                    Section.user_id == event.chat_id, extract('month', Record.datetime) == current_month,
+                    Section.names.like(command.args[0].value), Record.amount < 0).all()
+                if records:
+                    msg = f"Расходы в разделе **{command.args[0].original_value}** за {month_name}\n\n"
+                    for i, r in enumerate(records):
+                        cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                            CurrencyName.currency_id == r[1]).all()
+                        names = [name[0] for name in cnames]
+                        msg += f"**Валюта**: {', '.join(names)}\n"
+                        msg += f"**Сумма**: {r[0]}\n\n"
+                else:
+                    msg = f"Нет расходов."
+        elif check_pattern(command.args, 'month'):
+            month = get_month(command.args[0].value)
+            if month is not None:
+                month_name = list(months.keys())[list(months.values()).index(month)]
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                        Record.amount < 0).all()
+                    if records:
+                        msg = f"Расходы со всех разделов за {month_name}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет расходов."
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'date'):
+            date = get_date(command.args[0].value)
+            if date is not None:
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id,
+                        extract('year', Record.datetime) == date.year,
+                        extract('month', Record.datetime) == date.month,
+                        extract('day', Record.datetime) == date.day,
+                        Record.amount < 0).all()
+                    if records:
+                        msg = f"Расходы со всех разделов за {command.args[0].original_value}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет расходов."
+            else:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
+        elif check_pattern(command.args, 'month text'):
+            month = get_month(command.args[0].value)
+            if month is not None:
+                month_name = list(months.keys())[list(months.values()).index(month)]
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                        Section.names.like(command.args[1].value), Record.amount < 0).all()
+                    if records:
+                        msg = f"Расходы в разделе {command.args[1].original_value} за {month_name}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет расходов."
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'date text'):
+            date = get_date(command.args[0].value)
+            if date is not None:
+                with Session(engine) as session:
+                    records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                        Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                        Section.user_id == event.chat_id,
+                        extract('year', Record.datetime) == date.year,
+                        extract('month', Record.datetime) == date.month,
+                        extract('day', Record.datetime) == date.day,
+                        Section.names.like(command.args[1].value), Record.amount < 0).all()
+                    if records:
+                        msg = f"Расходы в разделе {command.args[1].original_value} за " \
+                              f"{command.args[0].original_value}\n\n"
+                        for i, r in enumerate(records):
+                            cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                CurrencyName.currency_id == r[1]).all()
+                            names = [name[0] for name in cnames]
+                            msg += f"**Валюта**: {', '.join(names)}\n"
+                            msg += f"**Сумма**: {r[0]}\n\n"
+                    else:
+                        msg = f"Нет расходов."
+            else:
+                msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
+                      'символа "`/`" может быть "`-`" либо "`.`".'
+        elif check_pattern(command.args, 'month number'):
+            month = get_month(command.args[0].value)
+            year = get_year(command.args[1].value)
+            if month is not None:
+                if year is not None:
+                    month_name = list(months.keys())[list(months.values()).index(month)]
+                    with Session(engine) as session:
+                        records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                            Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                            Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                            extract('year', Record.datetime) == year, Record.amount < 0).all()
+                        if records:
+                            msg = f"Расходы со всех разделов за {month_name} {year} года\n\n"
+                            for i, r in enumerate(records):
+                                cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                    CurrencyName.currency_id == r[1]).all()
+                                names = [name[0] for name in cnames]
+                                msg += f"**Валюта**: {', '.join(names)}\n"
+                                msg += f"**Сумма**: {r[0]}\n\n"
+                        else:
+                            msg = f"Нет расходов."
+                else:
+                    msg = 'Неверно задан аргумент: год. Он задаётся либо полным числом (например, **2024**) ' \
+                          'либо неполным числом (например, **24**).'
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        elif check_pattern(command.args, 'month number text'):
+            month = get_month(command.args[0].value)
+            year = get_year(command.args[1].value)
+            if month is not None:
+                if year is not None:
+                    month_name = list(months.keys())[list(months.values()).index(month)]
+                    with Session(engine) as session:
+                        records = session.query(func.sum(Record.amount), Record.currency_id).join(
+                            Section).group_by(Record.currency_id).order_by(Record.datetime).where(
+                            Section.user_id == event.chat_id, extract('month', Record.datetime) == month,
+                            extract('year', Record.datetime) == year,
+                            Section.names.like(command.args[2].value), Record.amount < 0).all()
+                        if records:
+                            msg = f"Расходы в разделе {command.args[2].original_value} за {month_name} {year} года\n\n"
+                            for i, r in enumerate(records):
+                                cnames = session.query(CurrencyName.name).order_by(CurrencyName.added_datetime).where(
+                                    CurrencyName.currency_id == r[1]).all()
+                                names = [name[0] for name in cnames]
+                                msg += f"**Валюта**: {', '.join(names)}\n"
+                                msg += f"**Сумма**: {r[0]}\n\n"
+                        else:
+                            msg = f"Нет расходов."
+                else:
+                    msg = 'Неверно задан аргумент: год. Он задаётся либо полным числом (например, **2024**) ' \
+                          'либо неполным числом (например, **24**).'
+            else:
+                msg = 'Неверно задан аргумент: месяц. Он задаётся либо названием месяца, либо его порядковым ' \
+                      'номером в году.'
+        else:
+            unknown = True
+    else:
+        unknown = True
+
+    if unknown:
+        msg = f"Неверный набор аргументов для команды `расход`! Отправьте /start, чтобы посмотреть список " \
               f"доступных аргументов."
 
     await bot.send_message(event.chat_id, msg, parse_mode='md')
