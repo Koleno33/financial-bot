@@ -13,19 +13,19 @@ answering_state = False
 bot = telethon.TelegramClient("bot", config["api_id"], config["api_hash"]).start(bot_token=config["bot_token"])
 
 def check_pattern(args: list[Arg] | Arg, pattern: str):
-    pattern = pattern.split()
+    split_patt = pattern.split()
     if type(args) is Arg:
         args = [args]
-    if len(args) != len(pattern):
-        if pattern[-1] != 'comment':
+    if len(args) != len(split_patt):
+        if split_patt[-1] != 'comment':
             return False
-        elif len(args) < len(pattern) - 1:
+        elif len(args) < len(split_patt) - 1:
             return False
     for i in range(len(args)):
-        if pattern[i] == 'comment':
+        if split_patt[i] == 'comment':
             return True
-        if pattern[i] != args[i].type and not (pattern[i] == 'number' and args[i].type == 'time') and not (
-            pattern[i] == 'month' and args[i].type in ('number', 'text')):
+        if split_patt[i] != args[i].type and not (split_patt[i] == 'number' and args[i].type == 'time') and not (
+            split_patt[i] == 'month' and args[i].type in ('number', 'text')):
             return False
     return True
 
