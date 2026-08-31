@@ -87,7 +87,7 @@ class CurrencyName(Base):
     currency: Mapped["Currency"] = relationship(back_populates="cn")
 
 
-engine = create_engine(url="sqlite:///data.db", echo=True)
+engine = create_engine(url="sqlite:///data.db", echo=False)
 Base.metadata.create_all(engine)
 #with Session(engine) as session:
 #    records = session.query(func.sum(Record.amount), Record.currency_id).join(

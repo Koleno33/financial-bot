@@ -655,7 +655,7 @@ async def handle_report_command(event):
             try:
                 ew = ExcelWorker(records, years, section_currencies)
                 file = ew.get_bytes()
-                file.name = f"Отчет-{datetime.datetime.now()}.xlsx"
+                file.name = f"Отчет-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S-%f')}.xlsx"
                 file.seek(0)
                 await bot.send_message(event.chat_id, 'Отчет успешно сформирован.', parse_mode='md', file=file)
             except Exception as e:
@@ -752,7 +752,7 @@ async def handle_another_command(event):
             msg = 'Неверно задан аргумент: дата. Он задаётся в формате ДД/ММ/ГГ или ДД/ММ/ГГГГ. Вместо ' \
                   'символа "`/`" может быть "`-`" либо "`.`".'
         time = get_time(command.args[1].value)
-        if time is None: # datetime.datetime.combine(datetime.datetime.now().date(), datetime.datetime.now().time())
+        if time is None:
             if msg: msg += '\n'
             msg += 'Неверно задан аргумент: время. Он задаётся в формате ЧЧ.ММ. Вместо ' \
                   'символа "`.`" может быть "`:`".'
@@ -869,3 +869,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

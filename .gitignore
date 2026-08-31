@@ -9,3 +9,4 @@ Scripts/
 *.xlsx
 config.json
 pyvenv.cfg
+requirements.txt
