@@ -1,0 +1,9 @@
+et_xmlfile==2.0.0
+greenlet==3.5.5
+openpyxl==3.1.5
+pyaes==1.6.1
+pyasn1==0.6.4
+rsa==4.9.1
+SQLAlchemy==2.0.52
+Telethon==1.44.0
+typing_extensions==4.16.0
